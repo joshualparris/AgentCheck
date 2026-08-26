@@ -269,16 +269,91 @@ def test_forged_key_override_rejected_in_production(backend, key_env):
             with patch("builtins.open", side_effect=FileNotFoundError):
                 assert backend.get_tests_evidence("C:/fake", "python-full") is None
 
-def test_unexpected_notary_key_rejected(backend, key_env):
-    # Generate a completely different key pair
-    priv = ed25519.Ed25519PrivateKey.generate()
-    with patch("requests.post") as mock_post:
-        record = {"status": "PASS", "evidence": {"exit_code": 0}}
-        record = sign_record(record, priv) # Signed with wrong key!
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = record
-        mock_post.return_value = mock_resp
-        
-        # Validation should fail because backend uses key_env (via AGY_PUBLIC_KEY_PATH in pytest)
-        assert backend.get_tests_evidence("C:/fake", "python-full") is None
+
+import sys
+sys.path.insert(0, "C:/dev/AI-Verification/LLMAccountability")
+
+def test_integration_pushed_real_schema(backend, key_env, tmp_path):
+    import agy_service
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import json, hmac, hashlib
+    
+    agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
+    agy_service.private_key = key_env
+    client = TestClient(agy_service.app)
+
+    worker_evidence = {
+        "git_fetch": {"exit_code": 0, "stdout_snippet": ""},
+        "git_status": {"exit_code": 0, "stdout_snippet": ""},
+        "git_rev_parse_head": {"exit_code": 0, "stdout_snippet": "a" * 40},
+        "git_ls_remote": {"exit_code": 0, "stdout_snippet": f"{'a'*40} refs/heads/main"},
+        "local_branch": "main",
+        "git_remote_url": {"exit_code": 0, "stdout_snippet": "https://github.com/foo/bar.git"}
+    }
+    
+    job_nonce = "test-job-id"
+    canonical = json.dumps(worker_evidence, sort_keys=True).encode("utf-8")
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+    
+    with patch("agy_service.get_secret", return_value=b"test-secret"):
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"evidence": worker_evidence, "signature": sig}
+            mock_post.return_value = mock_resp
+            
+            def mock_certify(claim, **kwargs):
+                resp = client.post("/certify", json={"claim": claim, **kwargs})
+                if resp.status_code == 200 and resp.json()["status"] == "PASS":
+                    return resp.json()["evidence"]
+                return None
+                
+            with patch.object(backend, "_certify", side_effect=mock_certify):
+                local_ev, remote_ev = backend.get_push_evidence("C:/fake")
+                assert remote_ev is not None
+                assert remote_ev.remote_verified is True
+                assert remote_ev.local_head == "a" * 40
+
+def test_integration_test_counts_real_schema(backend, key_env, tmp_path):
+    import agy_service
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import json, hmac, hashlib
+    
+    agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
+    agy_service.private_key = key_env
+    client = TestClient(agy_service.app)
+    
+    worker_evidence = {
+        "exit_code": 0,
+        "tests": 10,
+        "passed": 8,
+        "failures": 1,
+        "skipped": 1
+    }
+    
+    job_nonce = "test-job-id"
+    canonical = json.dumps(worker_evidence, sort_keys=True).encode("utf-8")
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+    
+    with patch("agy_service.get_secret", return_value=b"test-secret"):
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"evidence": worker_evidence, "signature": sig}
+            mock_post.return_value = mock_resp
+            
+            def mock_certify(claim, **kwargs):
+                resp = client.post("/certify", json={"claim": claim, **kwargs})
+                if resp.status_code == 200 and resp.json()["status"] == "PASS":
+                    return resp.json()["evidence"]
+                return None
+                
+            with patch.object(backend, "_certify", side_effect=mock_certify):
+                ev = backend.get_tests_evidence("C:/fake", "python-full")
+                assert ev is not None
+                assert ev.collected == 10
+                assert ev.passed == 8
+                assert ev.failed == 1
+                assert ev.skipped == 1

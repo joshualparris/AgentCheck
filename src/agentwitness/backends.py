@@ -100,10 +100,10 @@ class LLMAccountabilityBackend(VerificationBackend):
         # We do not hallucinate passed=1 or collected=1 here.
         # It's up to the evaluator to handle missing metrics if it requires them.
         return PytestEvidence(
-            collected=None,
-            passed=None,
-            failed=None,
-            skipped=None,
+            collected=evidence.get("tests"),
+            passed=evidence.get("passed"),
+            failed=evidence.get("failures"),
+            skipped=evidence.get("skipped"),
             exit_code=exit_code,
             workspace_file_count=None
         )
@@ -113,11 +113,10 @@ class LLMAccountabilityBackend(VerificationBackend):
         if not evidence:
             return None, None
 
-        head = evidence.get("git_rev_parse_head", {}).get("stdout_snippet", "").strip()
+        head = evidence.get("local_head") or evidence.get("git_rev_parse_head", {}).get("stdout_snippet", "").strip()
         local_branch = evidence.get("local_branch", "unknown")
         
-        git_status_out = evidence.get("git_status", {}).get("stdout_snippet", "")
-        dirty = bool(git_status_out.strip()) if git_status_out is not None else True # fail closed if unknown
+        dirty = not evidence.get("worktree_clean", False)
         
         local_ev = GitEvidence(
             head=head,
@@ -126,12 +125,12 @@ class LLMAccountabilityBackend(VerificationBackend):
             modified=[]
         )
         
-        remote_head_str = evidence.get("git_ls_remote", {}).get("stdout_snippet", "")
-        ls_remote_sha = remote_head_str.split()[0] if remote_head_str else ""
+        ls_remote_str = evidence.get("remote_head") or evidence.get("git_ls_remote", {}).get("stdout_snippet", "") or ""
+        ls_remote_sha = ls_remote_str.split()[0] if ls_remote_str else ""
         if not ls_remote_sha:
             ls_remote_sha = evidence.get("git_rev_parse_upstream", {}).get("stdout_snippet", "").strip()
             
-        fetch_succeeded = (evidence.get("git_fetch", {}).get("exit_code") == 0)
+        fetch_succeeded = evidence.get("fetch_succeeded", False) or (evidence.get("git_fetch", {}).get("exit_code") == 0)
         
         def is_valid_sha(s):
             return bool(s and len(s) >= 40 and all(c in "0123456789abcdefABCDEF" for c in s))

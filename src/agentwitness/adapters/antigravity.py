@@ -20,7 +20,7 @@ class AntigravityAdapter:
         self.conversation_id = self.transcript_path.parent.parent.parent.name if self.transcript_path.parts else "unknown"
         self.ledger = ledger
 
-    def parse_receipts(self) -> Tuple[List[Receipt], Dict[str, int]]:
+    def parse_receipts(self, bound_task_id: Optional[str] = None, bound_session_id: Optional[str] = None) -> Tuple[List[Receipt], Dict[str, int]]:
         receipts = []
         stats = {"imported": 0, "already_seen": 0, "ambiguous": 0, "rejected": 0}
         
@@ -185,7 +185,7 @@ class AntigravityAdapter:
         
         receipt = Receipt(
             receipt_id=str(uuid.uuid4()),
-            session_id=self.conversation_id,
+            session_id=bound_session_id or self.conversation_id,
             timestamp_start=cmd_info["start_time"],
             timestamp_end=end_time or datetime.now(timezone.utc).isoformat(),
             cwd=cmd_info["cwd"],

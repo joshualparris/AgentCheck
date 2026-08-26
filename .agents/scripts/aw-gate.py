@@ -3,14 +3,42 @@ import os
 import json
 from pathlib import Path
 
-# Insert src into PYTHONPATH to use local agentwitness code
-repo_root = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(repo_root / "src"))
+try:
+    from agentwitness.ledger import Ledger
+    from agentwitness.contracts.models import TaskStatus, RequirementStatus, RequirementType
+    from agentwitness.contracts.storage import ContractStorage
+    from agentwitness.contracts.evaluator import ContractEvaluator
+    from agentwitness.adapters.antigravity import AntigravityAdapter
+    from agentwitness.broker import WitnessBroker
+    from agentwitness.claimguard import ClaimGuard
+    from agentwitness.models import Verdict
+except ImportError:
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    sys.path.insert(0, str(repo_root / "src"))
+    from agentwitness.ledger import Ledger
+    from agentwitness.contracts.models import TaskStatus, RequirementStatus, RequirementType
+    from agentwitness.contracts.storage import ContractStorage
+    from agentwitness.contracts.evaluator import ContractEvaluator
+    from agentwitness.adapters.antigravity import AntigravityAdapter
+    from agentwitness.broker import WitnessBroker
+    from agentwitness.claimguard import ClaimGuard
+    from agentwitness.models import Verdict
 
-from agentwitness.ledger import Ledger
-from agentwitness.contracts.models import TaskContract, TaskStatus
-from agentwitness.contracts.evaluator import ContractEvaluator
-from agentwitness.adapters.antigravity import AntigravityAdapter
+def get_final_response(transcript_path: Path) -> str:
+    lines = []
+    with open(transcript_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+            if data.get("source") == "MODEL" and data.get("content"):
+                return data["content"]
+        except Exception:
+            continue
+    return ""
 
 def main():
     try:
@@ -18,62 +46,102 @@ def main():
     except Exception:
         input_data = {}
 
-    transcript_path = input_data.get("transcriptPath")
-    
-    # If no transcript, just allow
-    if not transcript_path or not Path(transcript_path).exists():
+    cwd = Path(os.getcwd())
+    if cwd.name == ".agents":
+        cwd = cwd.parent
+    os.chdir(cwd)
+
+    aw_dir = cwd / ".agentwitness"
+    if not aw_dir.exists():
         print(json.dumps({"decision": "allow"}))
         return
 
-    # The CWD is .agents, so repo root is its parent
-    cwd = Path(os.getcwd()).parent
-    aw_dir = cwd / ".agentwitness"
-    ledger_path = aw_dir / "receipts.jsonl"
-    contract_path = aw_dir / "contract.json"
-    
-    if not aw_dir.exists() or not contract_path.exists():
+    ledger = Ledger(filepath=aw_dir / "receipts.jsonl")
+
+    active_bindings = {}
+    for r in ledger.read_all():
+        for ev in r.environmental_evidence:
+            if getattr(ev, "type", "") == "task_binding" and getattr(ev, "conversation_id", "") == input_data.get("conversationId", ""):
+                b_task_id = getattr(ev, "task_id", "")
+                b_session_id = getattr(ev, "session_id", "")
+                active_bindings[b_task_id] = b_session_id
+
+    if len(active_bindings) == 0:
         print(json.dumps({"decision": "allow"}))
         return
+    elif len(active_bindings) > 1:
+        print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: Conflicting task bindings for this conversation."}))
+        return
+
+    b_task_id, b_session_id = list(active_bindings.items())[0]
 
     try:
-        # Load contract
-        contract_data = json.loads(contract_path.read_text(encoding="utf-8"))
-        contract = TaskContract(**contract_data)
-        
-        # Load ledger and adapter
-        ledger = Ledger(filepath=ledger_path)
+        transcript_path = input_data.get("transcriptPath")
+        if not transcript_path or not Path(transcript_path).exists():
+            print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: Transcript path is missing or does not exist."}))
+            return
+
+        fully_idle = input_data.get("fullyIdle", True)
+        if not fully_idle:
+            print(json.dumps({"decision": "continue", "reason": "AgentWitness Gate: fullyIdle is false. Outstanding background tasks exist."}))
+            return
+
+        term_reason = input_data.get("terminationReason", "model_stop")
+        if term_reason != "model_stop":
+            print(json.dumps({"decision": "allow"}))
+            return
+
+        storage = ContractStorage(directory=aw_dir / "tasks", ledger=ledger)
+        contract = storage.load(b_task_id)
+        if not contract:
+            print(json.dumps({"decision": "continue", "reason": f"AgentWitness Integrity Error: Bound task {b_task_id} not found."}))
+            return
+
         adapter = AntigravityAdapter(transcript_path=Path(transcript_path), ledger=ledger)
-        
-        # Import transcript evidence
-        receipts, _ = adapter.parse_receipts()
+        receipts, stats = adapter.parse_receipts(bound_task_id=b_task_id, bound_session_id=b_session_id)
+
         for r in receipts:
             ledger.append(r)
-        
-        # Evaluate contract
+
         evaluator = ContractEvaluator(ledger=ledger)
         eval_result = evaluator.evaluate(contract)
-        
+
+        # Independent Stop-time verification for TESTS_PASS
+        tests_pass_req = next((req for req in contract.requirements if req.type == RequirementType.TESTS_PASS), None)
+        if tests_pass_req and "verification_command" in tests_pass_req.parameters:
+            tp_res = next((res for res in eval_result.results if res.requirement.type == RequirementType.TESTS_PASS), None)
+            if tp_res and tp_res.status == RequirementStatus.UNVERIFIED:
+                cmd_dict = tests_pass_req.parameters["verification_command"]
+                command = cmd_dict.get("command")
+                args = cmd_dict.get("args", [])
+                if command:
+                    broker = WitnessBroker(ledger=ledger)
+                    receipt = broker.run_command(command, args, session_id=b_session_id)
+                    evaluator = ContractEvaluator(ledger=ledger)
+                    eval_result = evaluator.evaluate(contract)
+
+        reasons = []
         if eval_result.status != TaskStatus.DONE:
-            reasons = []
             for r in eval_result.results:
                 if r.status.value != "SATISFIED":
                     reasons.append(f"{r.requirement.type.value}: {r.explanation}")
-            
+
+        final_text = get_final_response(Path(transcript_path))
+        if final_text:
+            claims = ClaimGuard(ledger=ledger).audit(final_text, session_id=b_session_id)
+            if claims:
+                for c in claims:
+                    if c.verdict not in {Verdict.VERIFIED, Verdict.ACTION_VERIFIED}:
+                        reasons.append(f"Claim unsupported ({c.verdict.value}): {c.text}")
+
+        if reasons:
             reason_str = "AgentWitness Final-Answer Gate: Task is not complete. " + " | ".join(reasons)
-            print(json.dumps({
-                "decision": "continue",
-                "reason": reason_str
-            }))
+            print(json.dumps({"decision": "continue", "reason": reason_str}))
         else:
             print(json.dumps({"decision": "allow"}))
-            
+
     except Exception as e:
-        # Fail open or fail closed? Let's print the error and fail open so we don't break the agent permanently.
-        # Actually, let's just allow on crash for safety, but maybe log it?
-        print(json.dumps({
-            "decision": "allow",
-            "reason": f"AgentWitness error: {str(e)}"
-        }))
+        print(json.dumps({"decision": "continue", "reason": f"AgentWitness Exception: {str(e)}"}))
 
 if __name__ == '__main__':
     main()

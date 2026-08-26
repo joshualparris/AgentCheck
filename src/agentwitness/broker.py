@@ -76,20 +76,21 @@ class WitnessBroker:
                 if pytest_ev:
                      evidence_list.append(pytest_ev)
                      
-            if command == "git":
-                if "push" in args:
-                     # Attempt remote git evidence
-                     branch = "main" # default for prototype
-                     for idx, arg in enumerate(args):
-                         if not arg.startswith("-") and arg != "push" and arg != "origin":
-                             branch = arg
-                     remote_ev = capture_remote_git_evidence(os.getcwd(), branch)
-                     if remote_ev:
-                          evidence_list.append(remote_ev)
-                elif "commit" in args:
-                     git_ev = capture_git_state(os.getcwd())
-                     if git_ev:
-                          evidence_list.append(git_ev)
+            # Always try to capture git state after any command execution
+            try:
+                git_ev = capture_git_state(os.getcwd())
+                if git_ev:
+                    evidence_list.append(git_ev)
+                if command == "git" and "push" in args:
+                    branch = "main" # default for prototype
+                    for idx, arg in enumerate(args):
+                        if not arg.startswith("-") and arg != "push" and arg != "origin":
+                            branch = arg
+                    remote_ev = capture_remote_git_evidence(os.getcwd(), branch)
+                    if remote_ev:
+                         evidence_list.append(remote_ev)
+            except Exception:
+                pass
             
             status = ExecutionStatus.SUCCEEDED if result.returncode == 0 else ExecutionStatus.FAILED
             

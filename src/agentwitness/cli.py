@@ -27,6 +27,7 @@ def task_create(file: str = typer.Argument(...)):
     reqs = []
     for r_data in data.get("requirements", []):
         reqs.append(Requirement(
+            requirement_id=r_data.get("requirement_id", ""),
             type=RequirementType(r_data["type"]),
             required=r_data.get("required", True),
             parameters=r_data.get("parameters", {})
@@ -42,7 +43,33 @@ def task_create(file: str = typer.Argument(...)):
     
     storage = ContractStorage()
     storage.save(contract)
-    console.print(f"[bold green]Task contract '{contract.task_id}' created successfully.[/bold green]")
+    
+    # Write to ledger to guarantee immutability
+    import uuid
+    from agentwitness.ledger import Ledger
+    from agentwitness.models import Receipt
+    from agentwitness.models import ContractCreationEvidence
+    import os
+    
+    ledger = Ledger()
+    evidence = ContractCreationEvidence(
+        task_id=contract.task_id,
+        contract_hash=contract.canonical_hash()
+    )
+    receipt = Receipt(
+        receipt_id=str(uuid.uuid4()),
+        session_id=contract.session_id,
+        timestamp_start=contract.created_at,
+        timestamp_end=contract.created_at,
+        cwd=os.getcwd(),
+        resolved_executable="aw task create",
+        argv=[file],
+        policy_decision=PolicyDecision.ALLOW,
+        execution_status=ExecutionStatus.SUCCEEDED,
+        environmental_evidence=[evidence]
+    )
+    ledger.append(receipt)
+    console.print(f"[bold green]Task contract '{contract.task_id}' created successfully and logged to ledger.[/bold green]")
 
 def print_task_evaluation(eval_result):
     console.print(f"\n[bold]AgentWitness Task: {eval_result.contract.title}[/bold]")
@@ -106,6 +133,7 @@ def task_verify(task_id: str):
     
     if eval_result.status != TaskStatus.DONE:
         raise typer.Exit(1)
+@app.command()
 def run(command: str, args: list[str] = typer.Argument(None), session_id: Optional[str] = typer.Option(None, "--session-id")):
     """Run a command through the Witness Broker."""
     broker = WitnessBroker()

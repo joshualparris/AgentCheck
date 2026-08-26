@@ -39,9 +39,12 @@ class ContractStorage:
             data = json.load(f)
             
         stored_hash = data.pop("_stored_hash", None)
+        if not stored_hash:
+            raise ValueError(f"Tampering detected! Contract {task_id} is missing its _stored_hash.")
+            
         contract = TaskContract.model_validate(data)
         
-        if stored_hash and stored_hash != contract.canonical_hash():
+        if stored_hash != contract.canonical_hash():
             raise ValueError(f"Tampering detected! Contract {task_id} has been modified since creation.")
             
         return contract

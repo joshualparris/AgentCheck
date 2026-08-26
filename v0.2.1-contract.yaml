@@ -1,0 +1,17 @@
+task_id: v0.2.1-fixes
+title: Definition of Done fixes
+requirements:
+  - requirement_id: "r1"
+    type: tests_pass
+  - requirement_id: "r2"
+    type: local_commit_exists
+  - requirement_id: "r3"
+    type: remote_sha_match
+    parameters:
+      repository: joshualparris/AgentCheck
+  - requirement_id: "r4"
+    type: remote_ci_pass
+    parameters:
+      repository: joshualparris/AgentCheck
+  - requirement_id: "r5"
+    type: clean_worktree

@@ -28,6 +28,7 @@ class TaskStatus(str, Enum):
     DONE = "DONE"
 
 class Requirement(BaseModel):
+    requirement_id: str
     type: RequirementType
     required: bool = True
     parameters: Dict[str, Any] = Field(default_factory=dict)

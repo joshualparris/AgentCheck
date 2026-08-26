@@ -1,6 +1,6 @@
 import json
 from enum import Enum
-from typing import Optional, List, Dict, Any, Union
+from typing import Optional, List, Dict, Any, Union, Literal
 from pydantic import BaseModel, Field
 
 class Verdict(str, Enum):
@@ -58,7 +58,19 @@ class ExecutionFailureEvidence(EvidenceBase):
     type: str = "execution_failure"
     error_message: str
 
-EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, ExecutionFailureEvidence, EvidenceBase]
+class ContractCreationEvidence(EvidenceBase):
+    type: Literal["contract_creation"] = "contract_creation"
+    task_id: str
+    contract_hash: str
+
+class RemoteCIEvidence(EvidenceBase):
+    type: Literal["remote_ci"] = "remote_ci"
+    commit_sha: str
+    repository: str
+    ci_status: str
+    ci_conclusion: str
+
+EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, ExecutionFailureEvidence, ContractCreationEvidence, RemoteCIEvidence, EvidenceBase]
 
 class Receipt(BaseModel):
     schema_version: int = 2

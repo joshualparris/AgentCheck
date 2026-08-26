@@ -1,0 +1,77 @@
+import json
+from enum import Enum
+from typing import Optional, List, Dict, Any, Union
+from pydantic import BaseModel, Field
+
+class Verdict(str, Enum):
+    VERIFIED = "✅ VERIFIED"
+    ACTION_VERIFIED = "✅ ACTION VERIFIED"
+    PARTIALLY_VERIFIED = "⚠️ PARTIALLY VERIFIED"
+    UNVERIFIED = "⚪ UNVERIFIED"
+    CONTRADICTED = "🔴 CONTRADICTED"
+    POLICY_VIOLATION = "🔴 POLICY VIOLATION"
+    ERROR = "❌ ERROR"
+
+class PolicyDecision(str, Enum):
+    ALLOW = "ALLOW"
+    DENY = "DENY"
+    REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
+
+class EvidenceBase(BaseModel):
+    type: str
+
+class ProcessEvidence(EvidenceBase):
+    type: str = "process"
+    exit_code: int
+    stdout_hash: str
+    stderr_hash: str
+
+class PytestEvidence(EvidenceBase):
+    type: str = "pytest"
+    collected: int
+    passed: int
+    failed: int
+    skipped: int
+    exit_code: int
+
+class GitEvidence(EvidenceBase):
+    type: str = "git_state"
+    head: str
+    branch: str
+    dirty: bool
+    modified: List[str]
+
+class RemoteGitEvidence(EvidenceBase):
+    type: str = "remote_git"
+    local_head: str
+    remote_head: str
+    remote_verified: bool
+
+EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, EvidenceBase]
+
+class Receipt(BaseModel):
+    receipt_id: str
+    session_id: str
+    parent_action_id: Optional[str] = None
+    timestamp_start: str
+    timestamp_end: str
+    cwd: str
+    resolved_executable: str
+    argv: List[str]
+    policy_decision: PolicyDecision
+    policy_reason: Optional[str] = None
+    environmental_evidence: List[EvidenceAdapter] = Field(default_factory=list)
+    previous_hash: str = ""
+    receipt_hash: str = ""
+    signature: str = ""
+
+    def payload_for_hash(self) -> str:
+        # Excludes receipt_hash and signature for hashing
+        data = self.model_dump(exclude={"receipt_hash", "signature"})
+        return json.dumps(data, sort_keys=True)
+        
+class Claim(BaseModel):
+    text: str
+    claim_type: str
+    verdict: Verdict = Verdict.UNVERIFIED
+    evidence_text: str = ""

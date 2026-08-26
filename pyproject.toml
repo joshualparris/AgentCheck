@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentwitness"
+version = "0.1.0"
+description = "Independent verification layer for AI agents."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pydantic",
+    "typer",
+    "cryptography"
+]
+
+[project.scripts]
+aw = "agentwitness.cli:app"

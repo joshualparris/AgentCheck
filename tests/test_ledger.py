@@ -59,9 +59,9 @@ def test_ledger_v1_migration(temp_ledger):
     import json
     
     # We use a dedicated test keypair and fixture for a genuine v1 receipt
-    temp_ledger.signer = CryptoSigner(Path("tests/keys_v1"))
+    temp_ledger.signer = CryptoSigner(Path("tests/fixtures/v1"))
     
-    fixture_path = Path("tests/v1_fixture.json")
+    fixture_path = Path("tests/fixtures/v1/receipt.json")
     with open(fixture_path, "r", encoding="utf-8") as f:
         v1_json_str = f.read()
         

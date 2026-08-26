@@ -61,7 +61,7 @@ class ExecutionFailureEvidence(EvidenceBase):
 EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, ExecutionFailureEvidence, EvidenceBase]
 
 class Receipt(BaseModel):
-    schema_version: int = 2
+    schema_version: int = 1
     receipt_id: str
     session_id: str
     parent_action_id: Optional[str] = None
@@ -79,8 +79,12 @@ class Receipt(BaseModel):
     signature: str = ""
 
     def payload_for_hash(self) -> str:
+        exclude_fields = {"receipt_hash", "signature"}
+        if self.schema_version == 1:
+            exclude_fields.add("schema_version")
+            exclude_fields.add("execution_status")
         # Excludes receipt_hash and signature for hashing
-        data = self.model_dump(exclude={"receipt_hash", "signature"})
+        data = self.model_dump(exclude=exclude_fields)
         return json.dumps(data, sort_keys=True)
         
 class Claim(BaseModel):

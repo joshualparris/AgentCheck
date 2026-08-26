@@ -40,7 +40,7 @@ class WitnessBroker:
             timestamp_end = datetime.now(timezone.utc).isoformat()
             
             receipt = Receipt(
-                receipt_id=str(uuid.uuid4()),
+                schema_version=2, receipt_id=str(uuid.uuid4()),
                 session_id=active_session,
                 timestamp_start=timestamp_start,
                 timestamp_end=timestamp_end,
@@ -94,7 +94,7 @@ class WitnessBroker:
             status = ExecutionStatus.SUCCEEDED if result.returncode == 0 else ExecutionStatus.FAILED
             
             receipt = Receipt(
-                receipt_id=str(uuid.uuid4()),
+                schema_version=2, receipt_id=str(uuid.uuid4()),
                 session_id=active_session,
                 timestamp_start=timestamp_start,
                 timestamp_end=timestamp_end,
@@ -114,7 +114,7 @@ class WitnessBroker:
             from agentwitness.models import ExecutionFailureEvidence
             evidence_list.append(ExecutionFailureEvidence(error_message=str(e)))
             receipt = Receipt(
-                receipt_id=str(uuid.uuid4()),
+                schema_version=2, receipt_id=str(uuid.uuid4()),
                 session_id=active_session,
                 timestamp_start=timestamp_start,
                 timestamp_end=timestamp_end,

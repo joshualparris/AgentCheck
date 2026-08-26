@@ -71,7 +71,7 @@ class WitnessBroker:
             evidence_list.append(extract_process_evidence(result.returncode, result.stdout, result.stderr))
             
             # Domain-specific evidence
-            if command == "pytest" or command == "python" and "pytest" in args:
+            if command == "pytest" or command.endswith("pytest.exe") or command == "python" and "pytest" in args:
                 pytest_ev = parse_pytest_output(result.returncode, result.stdout)
                 if pytest_ev:
                      evidence_list.append(pytest_ev)

@@ -9,6 +9,7 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+*.egg-info/
 
 # AgentWitness generated state
 .agentwitness/

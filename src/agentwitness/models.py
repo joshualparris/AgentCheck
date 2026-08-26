@@ -18,16 +18,12 @@ class PolicyDecision(str, Enum):
     ALLOW = "ALLOW"
     DENY = "DENY"
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
-    NOT_EVALUATED = "NOT_EVALUATED"
-    BYPASSED = "BYPASSED"
-
 
 class PolicyEvaluation(str, Enum):
     EVALUATED = "EVALUATED"
     NOT_EVALUATED = "NOT_EVALUATED"
     BYPASSED = "BYPASSED"
     NOT_APPLICABLE = "NOT_APPLICABLE"
-
 
 class ExecutionStatus(str, Enum):
     NOT_ATTEMPTED = "NOT_ATTEMPTED"
@@ -167,7 +163,19 @@ class Receipt(BaseModel):
     receipt_hash: str = ""
     signature: str = ""
 
+
+    @model_validator(mode="after")
+    def validate_policy_invariants(self) -> "Receipt":
+        if self.policy_evaluation == PolicyEvaluation.EVALUATED:
+            if self.policy_decision is None:
+                raise ValueError("policy_decision must not be None when policy_evaluation is EVALUATED")
+        else:
+            if self.policy_decision is not None:
+                raise ValueError(f"policy_decision must be None when policy_evaluation is {self.policy_evaluation}")
+        return self
+
     @model_validator(mode="before")
+
     @classmethod
     def migrate_legacy_policy(cls, data: dict) -> dict:
         if "schema_version" not in data:

@@ -148,6 +148,21 @@ def test_full_chain_migration(temp_ledger):
     v4_stored["signature"] = signer.sign(canon)
     prev_hash = v4_stored["receipt_hash"]
     
+
+    # V4 bypassed
+    v4b_payload = {
+        "schema_version": 4, "receipt_id": "v4b", "session_id": "s", "parent_action_id": None,
+        "timestamp_start": "t", "timestamp_end": "t", "cwd": "/", "resolved_executable": "echo",
+        "argv": [], "policy_decision": "BYPASSED", "policy_reason": None,
+        "execution_status": "SUCCEEDED", "provenance": "BROKER_WITNESSED", "environmental_evidence": [],
+        "previous_hash": prev_hash
+    }
+    canon = json.dumps(v4b_payload, sort_keys=True)
+    v4b_stored = dict(v4b_payload)
+    v4b_stored["receipt_hash"] = hash_payload(canon)
+    v4b_stored["signature"] = signer.sign(canon)
+    prev_hash = v4b_stored["receipt_hash"]
+
     # V5 payload (current, policy_evaluation)
     v5_payload = {
         "schema_version": 5, "receipt_id": "v5", "session_id": "s", "parent_action_id": None,
@@ -167,6 +182,7 @@ def test_full_chain_migration(temp_ledger):
         f.write(json.dumps(v2_stored) + "\n")
         f.write(json.dumps(v3_stored) + "\n")
         f.write(json.dumps(v4_stored) + "\n")
+        f.write(json.dumps(v4b_stored) + "\n")
         f.write(json.dumps(v5_stored) + "\n")
         
     assert temp_ledger.verify_chain() is True

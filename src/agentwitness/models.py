@@ -1,7 +1,7 @@
 import json
 from enum import Enum
 from typing import Optional, List, Union, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Verdict(str, Enum):
@@ -19,6 +19,11 @@ class PolicyDecision(str, Enum):
     DENY = "DENY"
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
 
+class PolicyEvaluation(str, Enum):
+    EVALUATED = "EVALUATED"
+    NOT_EVALUATED = "NOT_EVALUATED"
+    BYPASSED = "BYPASSED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
 
 class ExecutionStatus(str, Enum):
     NOT_ATTEMPTED = "NOT_ATTEMPTED"
@@ -26,6 +31,13 @@ class ExecutionStatus(str, Enum):
     FAILED = "FAILED"
     ERROR = "ERROR"
     UNKNOWN_LEGACY = "UNKNOWN_LEGACY"
+
+
+class Provenance(str, Enum):
+    BROKER_WITNESSED = "BROKER_WITNESSED"
+    LIVE_OBSERVED = "LIVE_OBSERVED"
+    REMOTE_OBSERVED = "REMOTE_OBSERVED"
+    TRANSCRIPT_IMPORTED = "TRANSCRIPT_IMPORTED"
 
 
 class EvidenceBase(BaseModel):
@@ -36,7 +48,7 @@ class ProcessEvidence(EvidenceBase):
     type: str = "process"
     exit_code: int
     stdout_hash: str
-    stderr_hash: str
+    stderr_hash: Optional[str] = None
 
 
 class PytestEvidence(EvidenceBase):
@@ -48,6 +60,18 @@ class PytestEvidence(EvidenceBase):
     exit_code: int
     workspace_fingerprint: Optional[str] = None
     workspace_file_count: int = 0
+
+
+class TranscriptIntegrityEvidence(EvidenceBase):
+    type: Literal["transcript_integrity"] = "transcript_integrity"
+    source_path: str
+    conversation_id: str
+    import_id: str
+    command_id: Optional[str] = None
+    result_id: Optional[str] = None
+    command_raw_event_hash: str
+    result_raw_event_hash: str
+    import_timestamp: str
 
 
 class GitEvidence(EvidenceBase):
@@ -107,6 +131,7 @@ class ProtectedSectionsEvidence(EvidenceBase):
 EvidenceAdapter = Union[
     ProcessEvidence,
     PytestEvidence,
+    TranscriptIntegrityEvidence,
     GitEvidence,
     RemoteGitEvidence,
     ExecutionFailureEvidence,
@@ -119,7 +144,7 @@ EvidenceAdapter = Union[
 
 
 class Receipt(BaseModel):
-    schema_version: int = 3
+    schema_version: int = 5
     receipt_id: str
     session_id: str
     parent_action_id: Optional[str] = None
@@ -128,21 +153,68 @@ class Receipt(BaseModel):
     cwd: str
     resolved_executable: str
     argv: List[str]
-    policy_decision: PolicyDecision
+    policy_evaluation: PolicyEvaluation = PolicyEvaluation.EVALUATED
+    policy_decision: Optional[PolicyDecision] = None
     policy_reason: Optional[str] = None
     execution_status: ExecutionStatus = ExecutionStatus.UNKNOWN_LEGACY
+    provenance: Provenance = Provenance.BROKER_WITNESSED
     environmental_evidence: List[EvidenceAdapter] = Field(default_factory=list)
     previous_hash: str = ""
     receipt_hash: str = ""
     signature: str = ""
 
+
+    @model_validator(mode="after")
+    def validate_policy_invariants(self) -> "Receipt":
+        if self.policy_evaluation == PolicyEvaluation.EVALUATED:
+            if self.policy_decision is None:
+                raise ValueError("policy_decision must not be None when policy_evaluation is EVALUATED")
+        else:
+            if self.policy_decision is not None:
+                raise ValueError(f"policy_decision must be None when policy_evaluation is {self.policy_evaluation}")
+        return self
+
+    @model_validator(mode="before")
+
+    @classmethod
+    def migrate_legacy_policy(cls, data: dict) -> dict:
+        if "schema_version" not in data:
+            return data
+            
+        sv = data.get("schema_version")
+        if sv <= 4:
+            pd = data.get("policy_decision")
+            if pd == "NOT_EVALUATED":
+                data["policy_evaluation"] = "NOT_EVALUATED"
+                data["policy_decision"] = None
+            elif pd == "BYPASSED":
+                data["policy_evaluation"] = "BYPASSED"
+                data["policy_decision"] = None
+            else:
+                data["policy_evaluation"] = "EVALUATED"
+        return data
+
     def payload_for_hash(self) -> str:
         exclude_fields = {"receipt_hash", "signature"}
         data = self.model_dump(exclude=exclude_fields)
 
+        if self.schema_version <= 4:
+            data.pop("policy_evaluation", None)
+            # Revert legacy mutated fields back to their historical form for hashing
+            pe = self.policy_evaluation
+            if pe == PolicyEvaluation.NOT_EVALUATED:
+                data["policy_decision"] = "NOT_EVALUATED"
+            elif pe == PolicyEvaluation.BYPASSED:
+                data["policy_decision"] = "BYPASSED"
+
         if self.schema_version == 1:
             data.pop("schema_version", None)
             data.pop("execution_status", None)
+            data.pop("provenance", None)
+        elif self.schema_version == 2:
+            data.pop("provenance", None)
+        elif self.schema_version == 3:
+            data.pop("provenance", None)
 
         if self.schema_version <= 2:
             for evidence in data.get("environmental_evidence", []):

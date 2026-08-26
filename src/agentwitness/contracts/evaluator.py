@@ -19,6 +19,7 @@ from agentwitness.ledger import Ledger
 from agentwitness.models import (
     ExecutionStatus,
     PolicyDecision,
+    PolicyEvaluation,
     Receipt,
     SecretScanEvidence,
     ProtectedSectionsEvidence,
@@ -35,6 +36,16 @@ class ContractEvaluator:
     def __init__(self, ledger: Ledger):
         self.ledger = ledger
         self._active_session: Optional[str] = None
+
+    def _meets_provenance(self, receipt, min_provenance) -> bool:
+        from agentwitness.models import Provenance
+        strengths = {
+            Provenance.TRANSCRIPT_IMPORTED: 0,
+            Provenance.REMOTE_OBSERVED: 1,
+            Provenance.LIVE_OBSERVED: 2,
+            Provenance.BROKER_WITNESSED: 3
+        }
+        return strengths.get(receipt.provenance, 0) >= strengths.get(min_provenance, 0)
 
     @staticmethod
     def _ev_type(ev) -> str:
@@ -94,7 +105,7 @@ class ContractEvaluator:
             status = TaskStatus.DONE
         return TaskEvaluation(contract=contract, status=status, results=results)
 
-    def _record_observation(self, evidence, executable: str, argv: list[str], cwd: Optional[str] = None) -> str:
+    def _record_observation(self, evidence, executable: str, argv: list[str], provenance: "Provenance", cwd: Optional[str] = None) -> str:
         now = datetime.now(timezone.utc).isoformat()
         receipt = Receipt(
             receipt_id=str(uuid.uuid4()),
@@ -104,15 +115,20 @@ class ContractEvaluator:
             cwd=cwd or os.getcwd(),
             resolved_executable=executable,
             argv=argv,
-            policy_decision=PolicyDecision.ALLOW,
+            schema_version=5, policy_evaluation=PolicyEvaluation.NOT_APPLICABLE,
+            policy_decision=None,
             policy_reason="Independent verification observation.",
             execution_status=ExecutionStatus.SUCCEEDED,
+            provenance=provenance,
             environmental_evidence=[evidence],
         )
         self.ledger.append(receipt)
         return receipt.receipt_id
 
     def _evaluate_requirement(self, req: Requirement, receipts: list) -> RequirementResult:
+        # Filter receipts to only those that meet the minimum provenance
+        valid_receipts = [r for r in receipts if self._meets_provenance(r, req.min_provenance)]
+        
         dispatch = {
             RequirementType.TESTS_PASS: self._eval_tests_pass,
             RequirementType.LOCAL_COMMIT_EXISTS: self._eval_local_commit,
@@ -126,7 +142,11 @@ class ContractEvaluator:
         handler = dispatch.get(req.type)
         if not handler:
             return RequirementResult(requirement=req, status=RequirementStatus.ERROR, explanation=f"Unknown requirement type: {req.type}")
-        return handler(req, receipts)
+            
+        if req.type == RequirementType.NO_POLICY_VIOLATIONS:
+            return handler(req, receipts)
+            
+        return handler(req, valid_receipts)
 
     def _eval_tests_pass(self, req: Requirement, receipts: list) -> RequirementResult:
         for receipt in reversed(receipts):
@@ -194,6 +214,8 @@ class ContractEvaluator:
     def _eval_local_commit(self, req: Requirement, receipts: list) -> RequirementResult:
         expected_sha = req.parameters.get("commit_sha")
         for receipt in reversed(receipts):
+            if not self._meets_provenance(receipt, req.min_provenance):
+                continue
             executable = Path(receipt.resolved_executable).name.lower()
             if executable not in {"git", "git.exe"} or "commit" not in receipt.argv:
                 continue
@@ -229,7 +251,10 @@ class ContractEvaluator:
         live = capture_remote_git_evidence(os.getcwd(), branch=branch, remote=remote)
         if live is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently inspect the current git remote.")
-        receipt_id = self._record_observation(live, "git", ["fetch", remote, branch])
+        
+        from agentwitness.models import Provenance
+        receipt_id = self._record_observation(live, "git", ["fetch", remote, branch], provenance=Provenance.REMOTE_OBSERVED)
+        
         if expected_repo and (live.repository or "").lower() != expected_repo.lower():
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Observed repository {live.repository!r} does not match required {expected_repo}.")
         if not live.fetch_succeeded:
@@ -257,7 +282,10 @@ class ContractEvaluator:
         state = capture_git_state(os.getcwd())
         if state is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently read the current git worktree.")
-        receipt_id = self._record_observation(state, "git", ["status", "--porcelain"])
+        
+        from agentwitness.models import Provenance
+        receipt_id = self._record_observation(state, "git", ["status", "--porcelain"], provenance=Provenance.LIVE_OBSERVED)
+        
         if state.dirty:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Current worktree is dirty ({len(state.modified)} changed path(s)).")
         return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt_id], explanation="Current independently observed worktree is clean.")
@@ -266,7 +294,12 @@ class ContractEvaluator:
         violating = [r.receipt_id for r in receipts if r.policy_decision == PolicyDecision.DENY]
         if violating:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=violating, explanation="Denied policy actions were recorded in this task session.")
-        return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, explanation="No denied policy actions were recorded in this task session.")
+            
+        bypassed = [r.receipt_id for r in receipts if r.policy_evaluation in (PolicyEvaluation.NOT_EVALUATED, PolicyEvaluation.BYPASSED)]
+        if bypassed:
+            return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=bypassed, explanation="Some actions in this session were not evaluated by the policy engine (e.g. transcript imports).")
+            
+        return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, explanation="All recorded actions passed policy evaluation.")
 
     def _latest_remote_sha(self, receipts: list) -> Optional[str]:
         for receipt in reversed(receipts):
@@ -283,7 +316,8 @@ class ContractEvaluator:
         status, explanation, evidence = observe_remote_ci(expected_sha, os.getcwd(), expected_repo)
         ids: list[str] = []
         if evidence is not None:
-            ids.append(self._record_observation(evidence, "gh", ["api", "check-runs", expected_sha]))
+            from agentwitness.models import Provenance
+            ids.append(self._record_observation(evidence, "gh", ["api", "check-runs", expected_sha], provenance=Provenance.REMOTE_OBSERVED))
         return RequirementResult(requirement=req, status=RequirementStatus(status), evidence_receipt_ids=ids, explanation=explanation)
 
     def _eval_no_secrets(self, req: Requirement, receipts: list) -> RequirementResult:
@@ -293,7 +327,10 @@ class ContractEvaluator:
         if hits is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not read a git diff to check for credential patterns.")
         evidence = SecretScanEvidence(commit_sha=commit_sha, hit_count=len(hits), files=sorted({h.path for h in hits}), patterns=sorted({h.pattern for h in hits}))
-        receipt_id = self._record_observation(evidence, "git", ["secret-scan", commit_sha or "working-tree"])
+        
+        from agentwitness.models import Provenance
+        receipt_id = self._record_observation(evidence, "git", ["secret-scan", commit_sha or "working-tree"], provenance=Provenance.LIVE_OBSERVED)
+        
         if hits:
             shown = ", ".join(f"{h.path}:{h.line} ({h.pattern})" for h in hits[:5])
             more = f"; +{len(hits) - 5} more" if len(hits) > 5 else ""
@@ -310,7 +347,9 @@ class ContractEvaluator:
             changed_blocks=[f"{c.path}::{c.name}" for c in check.changes],
             errors=check.errors[:20],
         )
-        receipt_id = self._record_observation(evidence, "git", ["protected-sections-check"])
+        
+        from agentwitness.models import Provenance
+        receipt_id = self._record_observation(evidence, "git", ["protected-sections-check"], provenance=Provenance.LIVE_OBSERVED)
 
         if check.status == "inconclusive":
             detail = "; ".join(check.errors[:3]) or "Protected-section state could not be determined."

@@ -44,11 +44,26 @@ aw run --session-id my-task -- git commit -m "fix"
 aw run --session-id my-task -- git push origin main
 ```
 
-Audit an agent claim:
+You can manually audit an agent's claim using `aw audit`:
 
-```bash
-aw audit --session-id my-task "I ran all the tests and they passed."
+```powershell
+aw audit "I just fixed the bug and ran all tests"
 ```
+
+## AgentWitness Adapters & Transcript Import
+
+AgentWitness can retroactively import evidence from native agent transcripts (like Google Antigravity).
+
+```powershell
+aw sync-transcript <conversation-id>
+```
+
+> [!WARNING]
+> **SIGNED IMPORT != WITNESSED EXECUTION**
+>
+> When AgentWitness imports a transcript, it creates a cryptographically signed receipt proving *AgentWitness processed the transcript*. It does **not** prove AgentWitness intercepted or verified the execution directly.
+>
+> Imported receipts are assigned a lower `Provenance.TRANSCRIPT_IMPORTED` strength. By default, AgentWitness Definition-of-Done contracts require `BROKER_WITNESSED` provenance, meaning transcript evidence alone cannot satisfy core compliance requirements unless explicitly permitted.
 
 View receipts:
 

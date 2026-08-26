@@ -5,7 +5,7 @@ import shutil
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from agentwitness.models import Receipt, PolicyDecision, ExecutionStatus, EvidenceAdapter
+from agentwitness.models import Receipt, PolicyDecision, PolicyEvaluation, ExecutionStatus, EvidenceAdapter
 from agentwitness.ledger import Ledger
 from agentwitness.policy import PolicyGate
 from agentwitness.evidence.process import extract_process_evidence
@@ -41,7 +41,7 @@ class WitnessBroker:
                 receipt_id=str(uuid.uuid4()), session_id=active_session,
                 timestamp_start=timestamp_start, timestamp_end=timestamp_end,
                 cwd=os.getcwd(), resolved_executable=resolved_executable, argv=args,
-                policy_decision=decision, policy_reason=policy_result.reason,
+                schema_version=5, policy_evaluation=PolicyEvaluation.EVALUATED, policy_decision=decision, policy_reason=policy_result.reason,
                 execution_status=ExecutionStatus.NOT_ATTEMPTED,
                 environmental_evidence=evidence_list,
             )
@@ -97,7 +97,7 @@ class WitnessBroker:
                 receipt_id=str(uuid.uuid4()), session_id=active_session,
                 timestamp_start=timestamp_start, timestamp_end=timestamp_end,
                 cwd=os.getcwd(), resolved_executable=resolved_executable, argv=args,
-                policy_decision=decision, policy_reason=policy_result.reason,
+                schema_version=5, policy_evaluation=PolicyEvaluation.EVALUATED, policy_decision=decision, policy_reason=policy_result.reason,
                 execution_status=status, environmental_evidence=evidence_list,
             )
             self.ledger.append(receipt)
@@ -110,7 +110,7 @@ class WitnessBroker:
                 receipt_id=str(uuid.uuid4()), session_id=active_session,
                 timestamp_start=timestamp_start, timestamp_end=timestamp_end,
                 cwd=os.getcwd(), resolved_executable=resolved_executable, argv=args,
-                policy_decision=decision,
+                schema_version=5, policy_evaluation=PolicyEvaluation.EVALUATED, policy_decision=decision,
                 policy_reason="Attempt permitted but execution failed",
                 execution_status=ExecutionStatus.ERROR,
                 environmental_evidence=evidence_list,

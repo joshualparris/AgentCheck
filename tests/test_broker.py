@@ -3,7 +3,7 @@ import tempfile
 from unittest.mock import patch
 from agentwitness.broker import WitnessBroker
 from agentwitness.ledger import Ledger
-from agentwitness.models import PolicyDecision, ExecutionStatus
+from agentwitness.models import PolicyDecision, ExecutionStatus, PolicyEvaluation
 
 from pathlib import Path
 
@@ -15,6 +15,7 @@ def temp_broker():
 
 def test_broker_successful_command(temp_broker):
     receipt = temp_broker.run_command("python", ["-c", "print('hello')"])
+    assert receipt.policy_evaluation == PolicyEvaluation.EVALUATED
     assert receipt.policy_decision == PolicyDecision.ALLOW
     assert receipt.environmental_evidence[0].exit_code == 0
     assert len(receipt.environmental_evidence) >= 1
@@ -23,12 +24,14 @@ def test_broker_successful_command(temp_broker):
 
 def test_broker_missing_executable(temp_broker):
     receipt = temp_broker.run_command("this_command_does_not_exist_xyz123", [])
+    assert receipt.policy_evaluation == PolicyEvaluation.EVALUATED
     assert receipt.policy_decision == PolicyDecision.ALLOW
     assert "execution failed" in receipt.policy_reason
     assert receipt.environmental_evidence[0].type == "execution_failure"
 
 def test_broker_failing_command(temp_broker):
     receipt = temp_broker.run_command("python", ["-c", "import sys; sys.exit(1)"])
+    assert receipt.policy_evaluation == PolicyEvaluation.EVALUATED
     assert receipt.policy_decision == PolicyDecision.ALLOW
     assert receipt.environmental_evidence[0].exit_code == 1
 
@@ -41,5 +44,6 @@ def test_broker_stdout_stderr_hashes(temp_broker):
 
 def test_broker_policy_denial(temp_broker):
     receipt = temp_broker.run_command("git", ["push", "origin", "main"])
+    assert receipt.policy_evaluation == PolicyEvaluation.EVALUATED
     assert receipt.policy_decision == PolicyDecision.DENY
     assert receipt.execution_status == ExecutionStatus.NOT_ATTEMPTED

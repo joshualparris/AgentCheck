@@ -245,10 +245,13 @@ def sync_transcript(conversation_id: str):
         
     console.print(f"Parsing Antigravity transcript: {transcript_path}")
     adapter = AntigravityAdapter(transcript_path)
-    receipts = adapter.parse_receipts()
+    receipts, stats = adapter.parse_receipts()
     
     ledger = Ledger()
     for receipt in receipts:
         ledger.append(receipt)
         
-    console.print(f"[green]Successfully imported {len(receipts)} execution receipts into the ledger.[/green]")
+    console.print(f"Imported: {stats['imported']}")
+    console.print(f"Already seen: {stats['already_seen']}")
+    console.print(f"Ambiguous: {stats['ambiguous']}")
+    console.print(f"Rejected: {stats['rejected']}")

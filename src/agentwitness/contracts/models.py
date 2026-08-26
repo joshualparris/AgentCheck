@@ -34,11 +34,14 @@ class TaskStatus(str, Enum):
     DONE = "DONE"
 
 
+from agentwitness.models import Provenance
+
 class Requirement(BaseModel):
     requirement_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: RequirementType
     required: bool = True
     parameters: Dict[str, Any] = Field(default_factory=dict)
+    min_provenance: Provenance = Provenance.BROKER_WITNESSED
 
 
 class RequirementResult(BaseModel):

@@ -18,6 +18,8 @@ class PolicyDecision(str, Enum):
     ALLOW = "ALLOW"
     DENY = "DENY"
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
+    NOT_EVALUATED = "NOT_EVALUATED"
+    BYPASSED = "BYPASSED"
 
 
 class ExecutionStatus(str, Enum):
@@ -28,6 +30,13 @@ class ExecutionStatus(str, Enum):
     UNKNOWN_LEGACY = "UNKNOWN_LEGACY"
 
 
+class Provenance(str, Enum):
+    BROKER_WITNESSED = "BROKER_WITNESSED"
+    LIVE_OBSERVED = "LIVE_OBSERVED"
+    REMOTE_OBSERVED = "REMOTE_OBSERVED"
+    TRANSCRIPT_IMPORTED = "TRANSCRIPT_IMPORTED"
+
+
 class EvidenceBase(BaseModel):
     type: str
 
@@ -36,7 +45,7 @@ class ProcessEvidence(EvidenceBase):
     type: str = "process"
     exit_code: int
     stdout_hash: str
-    stderr_hash: str
+    stderr_hash: Optional[str] = None
 
 
 class PytestEvidence(EvidenceBase):
@@ -48,6 +57,15 @@ class PytestEvidence(EvidenceBase):
     exit_code: int
     workspace_fingerprint: Optional[str] = None
     workspace_file_count: int = 0
+
+
+class TranscriptIntegrityEvidence(EvidenceBase):
+    type: Literal["transcript_integrity"] = "transcript_integrity"
+    source_path: str
+    conversation_id: str
+    source_event_id: str
+    raw_event_hash: str
+    import_timestamp: str
 
 
 class GitEvidence(EvidenceBase):
@@ -107,6 +125,7 @@ class ProtectedSectionsEvidence(EvidenceBase):
 EvidenceAdapter = Union[
     ProcessEvidence,
     PytestEvidence,
+    TranscriptIntegrityEvidence,
     GitEvidence,
     RemoteGitEvidence,
     ExecutionFailureEvidence,
@@ -119,7 +138,7 @@ EvidenceAdapter = Union[
 
 
 class Receipt(BaseModel):
-    schema_version: int = 3
+    schema_version: int = 4
     receipt_id: str
     session_id: str
     parent_action_id: Optional[str] = None
@@ -131,6 +150,7 @@ class Receipt(BaseModel):
     policy_decision: PolicyDecision
     policy_reason: Optional[str] = None
     execution_status: ExecutionStatus = ExecutionStatus.UNKNOWN_LEGACY
+    provenance: Provenance = Provenance.BROKER_WITNESSED
     environmental_evidence: List[EvidenceAdapter] = Field(default_factory=list)
     previous_hash: str = ""
     receipt_hash: str = ""
@@ -143,6 +163,9 @@ class Receipt(BaseModel):
         if self.schema_version == 1:
             data.pop("schema_version", None)
             data.pop("execution_status", None)
+            
+        if self.schema_version <= 3:
+            data.pop("provenance", None)
 
         if self.schema_version <= 2:
             for evidence in data.get("environmental_evidence", []):

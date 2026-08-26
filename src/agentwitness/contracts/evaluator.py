@@ -36,6 +36,16 @@ class ContractEvaluator:
         self.ledger = ledger
         self._active_session: Optional[str] = None
 
+    def _meets_provenance(self, receipt, min_provenance) -> bool:
+        from agentwitness.models import Provenance
+        strengths = {
+            Provenance.TRANSCRIPT_IMPORTED: 0,
+            Provenance.REMOTE_OBSERVED: 1,
+            Provenance.LIVE_OBSERVED: 2,
+            Provenance.BROKER_WITNESSED: 3
+        }
+        return strengths.get(receipt.provenance, 0) >= strengths.get(min_provenance, 0)
+
     @staticmethod
     def _ev_type(ev) -> str:
         return ev.get("type") if isinstance(ev, dict) else getattr(ev, "type", "")
@@ -113,6 +123,9 @@ class ContractEvaluator:
         return receipt.receipt_id
 
     def _evaluate_requirement(self, req: Requirement, receipts: list) -> RequirementResult:
+        # Filter receipts to only those that meet the minimum provenance
+        valid_receipts = [r for r in receipts if self._meets_provenance(r, req.min_provenance)]
+        
         dispatch = {
             RequirementType.TESTS_PASS: self._eval_tests_pass,
             RequirementType.LOCAL_COMMIT_EXISTS: self._eval_local_commit,
@@ -126,7 +139,7 @@ class ContractEvaluator:
         handler = dispatch.get(req.type)
         if not handler:
             return RequirementResult(requirement=req, status=RequirementStatus.ERROR, explanation=f"Unknown requirement type: {req.type}")
-        return handler(req, receipts)
+        return handler(req, valid_receipts)
 
     def _eval_tests_pass(self, req: Requirement, receipts: list) -> RequirementResult:
         for receipt in reversed(receipts):
@@ -194,6 +207,8 @@ class ContractEvaluator:
     def _eval_local_commit(self, req: Requirement, receipts: list) -> RequirementResult:
         expected_sha = req.parameters.get("commit_sha")
         for receipt in reversed(receipts):
+            if not self._meets_provenance(receipt, req.min_provenance):
+                continue
             executable = Path(receipt.resolved_executable).name.lower()
             if executable not in {"git", "git.exe"} or "commit" not in receipt.argv:
                 continue

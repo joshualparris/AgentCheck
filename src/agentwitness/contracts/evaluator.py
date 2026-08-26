@@ -131,7 +131,8 @@ class ContractEvaluator:
 
     def _eval_local_commit(self, req: Requirement, receipts: list) -> RequirementResult:
         for receipt in reversed(receipts):
-            if receipt.resolved_executable == "git" and receipt.argv and receipt.argv[0] == "commit":
+            exec_name = receipt.resolved_executable.lower()
+            if (exec_name == "git" or exec_name.endswith("git.exe")) and receipt.argv and receipt.argv[0] == "commit":
                 if receipt.execution_status == ExecutionStatus.SUCCEEDED:
                     return RequirementResult(
                         requirement=req,

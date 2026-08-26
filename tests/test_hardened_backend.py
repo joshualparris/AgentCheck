@@ -328,8 +328,8 @@ def test_integration_test_counts_real_schema(backend, key_env, tmp_path):
     worker_evidence = {
         "exit_code": 0,
         "tests": 10,
-        "passed": 8,
-        "failures": 1,
+        "passed": 9,
+        "failures": 0,
         "skipped": 1
     }
     
@@ -354,6 +354,45 @@ def test_integration_test_counts_real_schema(backend, key_env, tmp_path):
                 ev = backend.get_tests_evidence("C:/fake", "python-full")
                 assert ev is not None
                 assert ev.collected == 10
-                assert ev.passed == 8
-                assert ev.failed == 1
+                assert ev.passed == 9
+                assert ev.failed == 0
                 assert ev.skipped == 1
+
+def test_integration_inconsistent_tests(backend, key_env, tmp_path):
+    import agy_service
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import json, hmac, hashlib
+    
+    agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
+    agy_service.private_key = key_env
+    client = TestClient(agy_service.app)
+    
+    inconsistent_cases = [
+        {"exit_code": 0, "tests": 10, "passed": 8, "failures": 1, "skipped": 1, "errors": 0},
+        {"exit_code": 0, "tests": -1, "passed": -1, "failures": 0, "skipped": 0, "errors": 0},
+        {"exit_code": 0, "tests": 10, "passed": 8, "failures": 0, "skipped": 3, "errors": 0}
+    ]
+    
+    for worker_evidence in inconsistent_cases:
+        job_nonce = "test-job-id"
+        canonical = json.dumps(worker_evidence, sort_keys=True).encode("utf-8")
+        sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+        
+        with patch("agy_service.get_secret", return_value=b"test-secret"):
+            with patch("requests.post") as mock_post:
+                mock_resp = MagicMock()
+                mock_resp.status_code = 200
+                mock_resp.json.return_value = {"evidence": worker_evidence, "signature": sig}
+                mock_post.return_value = mock_resp
+                
+                def mock_certify(claim, **kwargs):
+                    resp = client.post("/certify", json={"claim": claim, **kwargs})
+                    # Expected to fail
+                    if resp.status_code == 200 and resp.json()["status"] == "FAIL":
+                        return None
+                    return None
+                    
+                with patch.object(backend, "_certify", side_effect=mock_certify):
+                    ev = backend.get_tests_evidence("C:/fake", "python-full")
+                    assert ev is None, f"Expected validation failure for {worker_evidence}"

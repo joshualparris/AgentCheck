@@ -46,8 +46,8 @@ class PytestEvidence(EvidenceBase):
     failed: int
     skipped: int
     exit_code: int
-    # v0.2.1+: content fingerprint of the relevant workspace immediately
-    # after the test command. Older receipts legitimately omit these fields.
+    # Introduced in receipt schema v3. Historical v2 receipts legitimately
+    # omit these fields and payload_for_hash reconstructs their original bytes.
     workspace_fingerprint: Optional[str] = None
     workspace_file_count: int = 0
 
@@ -65,6 +65,7 @@ class RemoteGitEvidence(EvidenceBase):
     local_head: str
     remote_head: str
     remote_verified: bool
+    # Introduced in receipt schema v3.
     remote: str = "origin"
     branch: str = "main"
     repository: Optional[str] = None
@@ -112,7 +113,10 @@ EvidenceAdapter = Union[
 
 
 class Receipt(BaseModel):
-    schema_version: int = 2
+    # v1: no schema_version/execution_status in canonical payload
+    # v2: execution_status + original evidence shapes
+    # v3: freshness and remote-identity evidence fields
+    schema_version: int = 3
     receipt_id: str
     session_id: str
     parent_action_id: Optional[str] = None
@@ -130,11 +134,30 @@ class Receipt(BaseModel):
     signature: str = ""
 
     def payload_for_hash(self) -> str:
+        """Reconstruct the exact canonical payload for the receipt's schema.
+
+        Pydantic correctly supplies defaults when historical JSON is loaded, but
+        defaults introduced by a newer model must never be allowed to alter the
+        bytes that an older receipt originally signed.
+        """
         exclude_fields = {"receipt_hash", "signature"}
-        if self.schema_version == 1:
-            exclude_fields.add("schema_version")
-            exclude_fields.add("execution_status")
         data = self.model_dump(exclude=exclude_fields)
+
+        if self.schema_version == 1:
+            data.pop("schema_version", None)
+            data.pop("execution_status", None)
+
+        if self.schema_version <= 2:
+            for evidence in data.get("environmental_evidence", []):
+                if evidence.get("type") == "pytest":
+                    evidence.pop("workspace_fingerprint", None)
+                    evidence.pop("workspace_file_count", None)
+                elif evidence.get("type") == "remote_git":
+                    evidence.pop("remote", None)
+                    evidence.pop("branch", None)
+                    evidence.pop("repository", None)
+                    evidence.pop("fetch_succeeded", None)
+
         return json.dumps(data, sort_keys=True)
 
 

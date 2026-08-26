@@ -10,7 +10,7 @@ from agentwitness.cli import app
 from agentwitness.contracts.evaluator import ContractEvaluator
 from agentwitness.contracts.models import Requirement, RequirementStatus, RequirementType, TaskContract, TaskStatus
 from agentwitness.contracts.storage import ContractStorage
-from agentwitness.crypto import CryptoSigner
+from agentwitness.crypto import CryptoSigner, hash_payload
 from agentwitness.evidence.secrets import scan_git_diff_for_secrets
 from agentwitness.evidence.workspace import workspace_fingerprint
 from agentwitness.ledger import Ledger
@@ -98,6 +98,75 @@ def test_v2_contract_missing_adjacent_hash_is_tampering(tmp_path):
     path.write_text(json.dumps(data), encoding="utf-8")
     with pytest.raises(ValueError, match="missing its stored hash"):
         storage.load(contract.task_id)
+
+
+def test_v2_receipt_crypto_survives_v3_model_and_append(tmp_path):
+    """A real schema-v2 payload must still verify after v3 adds evidence fields."""
+    signer = CryptoSigner(tmp_path / "keys")
+    ledger = Ledger(filepath=tmp_path / "receipts.jsonl", signer=signer)
+
+    v2_payload = {
+        "schema_version": 2,
+        "receipt_id": "v2-receipt",
+        "session_id": "migration",
+        "parent_action_id": None,
+        "timestamp_start": "2026-08-26T03:00:00+00:00",
+        "timestamp_end": "2026-08-26T03:00:01+00:00",
+        "cwd": "/repo",
+        "resolved_executable": "pytest",
+        "argv": [],
+        "policy_decision": "ALLOW",
+        "policy_reason": None,
+        "execution_status": "SUCCEEDED",
+        "environmental_evidence": [
+            {
+                "type": "pytest",
+                "collected": 3,
+                "passed": 3,
+                "failed": 0,
+                "skipped": 0,
+                "exit_code": 0,
+            }
+        ],
+        "previous_hash": "0" * 64,
+    }
+    canonical = json.dumps(v2_payload, sort_keys=True)
+    stored = dict(v2_payload)
+    stored["receipt_hash"] = hash_payload(canonical)
+    stored["signature"] = signer.sign(canonical)
+    ledger.filepath.write_text(json.dumps(stored) + "\n", encoding="utf-8")
+
+    assert ledger.verify_chain() is True
+    loaded = ledger.read_all()[0]
+    assert loaded.schema_version == 2
+    assert loaded.environmental_evidence[0].workspace_fingerprint is None
+
+    ledger.append(
+        Receipt(
+            receipt_id="v3-receipt",
+            session_id="migration",
+            timestamp_start="2026-08-26T03:01:00+00:00",
+            timestamp_end="2026-08-26T03:01:01+00:00",
+            cwd="/repo",
+            resolved_executable="pytest",
+            argv=[],
+            policy_decision=PolicyDecision.ALLOW,
+            execution_status=ExecutionStatus.SUCCEEDED,
+            environmental_evidence=[
+                PytestEvidence(
+                    collected=3,
+                    passed=3,
+                    failed=0,
+                    skipped=0,
+                    exit_code=0,
+                    workspace_fingerprint="abc123",
+                    workspace_file_count=5,
+                )
+            ],
+        )
+    )
+    assert ledger.read_all()[1].schema_version == 3
+    assert ledger.verify_chain() is True
 
 
 def _git(cwd: Path, *args: str) -> str:

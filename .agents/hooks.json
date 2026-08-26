@@ -1,0 +1,12 @@
+{
+  "agentwitness-gate": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "..\\\\venv\\\\Scripts\\\\python.exe scripts/aw-gate.py",
+        "timeout": 30
+      }
+    ]
+  }
+}

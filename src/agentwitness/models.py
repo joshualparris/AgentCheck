@@ -1,7 +1,7 @@
 import json
 from enum import Enum
 from typing import Optional, List, Union, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Verdict(str, Enum):
@@ -20,6 +20,13 @@ class PolicyDecision(str, Enum):
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
     NOT_EVALUATED = "NOT_EVALUATED"
     BYPASSED = "BYPASSED"
+
+
+class PolicyEvaluation(str, Enum):
+    EVALUATED = "EVALUATED"
+    NOT_EVALUATED = "NOT_EVALUATED"
+    BYPASSED = "BYPASSED"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
 class ExecutionStatus(str, Enum):
@@ -141,7 +148,7 @@ EvidenceAdapter = Union[
 
 
 class Receipt(BaseModel):
-    schema_version: int = 4
+    schema_version: int = 5
     receipt_id: str
     session_id: str
     parent_action_id: Optional[str] = None
@@ -150,7 +157,8 @@ class Receipt(BaseModel):
     cwd: str
     resolved_executable: str
     argv: List[str]
-    policy_decision: PolicyDecision
+    policy_evaluation: PolicyEvaluation = PolicyEvaluation.EVALUATED
+    policy_decision: Optional[PolicyDecision] = None
     policy_reason: Optional[str] = None
     execution_status: ExecutionStatus = ExecutionStatus.UNKNOWN_LEGACY
     provenance: Provenance = Provenance.BROKER_WITNESSED
@@ -159,15 +167,43 @@ class Receipt(BaseModel):
     receipt_hash: str = ""
     signature: str = ""
 
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_policy(cls, data: dict) -> dict:
+        sv = data.get("schema_version", 1)
+        if sv <= 4:
+            pd = data.get("policy_decision")
+            if pd == "NOT_EVALUATED":
+                data["policy_evaluation"] = "NOT_EVALUATED"
+                data["policy_decision"] = None
+            elif pd == "BYPASSED":
+                data["policy_evaluation"] = "BYPASSED"
+                data["policy_decision"] = None
+            else:
+                data["policy_evaluation"] = "EVALUATED"
+        return data
+
     def payload_for_hash(self) -> str:
         exclude_fields = {"receipt_hash", "signature"}
         data = self.model_dump(exclude=exclude_fields)
 
+        if self.schema_version <= 4:
+            data.pop("policy_evaluation", None)
+            # Revert legacy mutated fields back to their historical form for hashing
+            pe = self.policy_evaluation
+            if pe == PolicyEvaluation.NOT_EVALUATED:
+                data["policy_decision"] = "NOT_EVALUATED"
+            elif pe == PolicyEvaluation.BYPASSED:
+                data["policy_decision"] = "BYPASSED"
+
         if self.schema_version == 1:
             data.pop("schema_version", None)
             data.pop("execution_status", None)
-            
-        if self.schema_version <= 3:
+            data.pop("provenance", None)
+        elif self.schema_version == 2:
+            data.pop("execution_status", None)
+            data.pop("provenance", None)
+        elif self.schema_version == 3:
             data.pop("provenance", None)
 
         if self.schema_version <= 2:

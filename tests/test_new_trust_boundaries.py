@@ -110,3 +110,72 @@ def test_policy_compliance_semantics(tmp_path):
     r_bypassed = Receipt(receipt_id="4", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="echo", argv=["a"], policy_decision=PolicyDecision.BYPASSED, execution_status=ExecutionStatus.SUCCEEDED, provenance=Provenance.BROKER_WITNESSED)
     assert evaluator._eval_no_policy_violations(req, [r_allow, r_bypassed]).status == RequirementStatus.UNVERIFIED
 
+import pytest
+from pathlib import Path
+from agentwitness.contracts.storage import ContractStorage
+from agentwitness.contracts.models import TaskContract, Requirement, RequirementType, RequirementStatus, TaskStatus
+from agentwitness.models import Provenance, Receipt, PolicyDecision, ExecutionStatus, PolicyEvaluation
+from agentwitness.contracts.evaluator import ContractEvaluator
+from agentwitness.ledger import Ledger
+import json
+
+def test_provenance_adversarial(tmp_path):
+    ledger = Ledger(filepath=tmp_path / "receipts.jsonl")
+    evaluator = ContractEvaluator(ledger=ledger)
+    
+    # 1. Create transcript-imported pytest evidence
+    from agentwitness.models import PytestEvidence
+    ev = PytestEvidence(collected=100, passed=100, failed=0, skipped=0, xfailed=0, xpassed=0, errors=0, exit_code=0, execution_time=1.0)
+    
+    r_imported = Receipt(
+        receipt_id="r1", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/", 
+        resolved_executable="pytest", argv=["pytest"], 
+        policy_evaluation=PolicyEvaluation.NOT_EVALUATED, 
+        execution_status=ExecutionStatus.SUCCEEDED, 
+        provenance=Provenance.TRANSCRIPT_IMPORTED,
+        environmental_evidence=[ev]
+    )
+    ledger.append(r_imported)
+    
+    # 2. Test with default BROKER_WITNESSED
+    contract = TaskContract(
+        task_id="t1", session_id="s", title="t", created_at="t",
+        requirements=[Requirement(type=RequirementType.TESTS_PASS)] # default min_provenance is BROKER_WITNESSED
+    )
+    
+    from agentwitness.models import ContractCreationEvidence
+    ev_anchor = ContractCreationEvidence(contract_hash=contract.canonical_hash(), task_id="t1", session_id="s")
+    r_anchor = Receipt(
+        receipt_id="r2", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/",
+        resolved_executable="aw", argv=["aw"],
+        policy_decision=PolicyDecision.ALLOW,
+        execution_status=ExecutionStatus.SUCCEEDED,
+        environmental_evidence=[ev_anchor]
+    )
+    ledger.append(r_anchor)
+    
+    eval_result = evaluator.evaluate(contract)
+    if eval_result.results[0].status == RequirementStatus.ERROR:
+        print(eval_result.results[0].explanation)
+    assert eval_result.results[0].status == RequirementStatus.UNVERIFIED
+    assert eval_result.status != TaskStatus.DONE
+    
+    # 3. Test with explicitly weakened min_provenance
+    contract_weak = TaskContract(
+        task_id="t2", session_id="s", title="t", created_at="t",
+        requirements=[Requirement(type=RequirementType.TESTS_PASS, min_provenance=Provenance.TRANSCRIPT_IMPORTED)]
+    )
+    ev_anchor_weak = ContractCreationEvidence(contract_hash=contract_weak.canonical_hash(), task_id="t2", session_id="s")
+    r_anchor_weak = Receipt(
+        receipt_id="r3", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/",
+        resolved_executable="aw", argv=["aw"],
+        policy_decision=PolicyDecision.ALLOW,
+        execution_status=ExecutionStatus.SUCCEEDED,
+        environmental_evidence=[ev_anchor_weak]
+    )
+    ledger.append(r_anchor_weak)
+    
+    eval_result_weak = evaluator.evaluate(contract_weak)
+    assert eval_result_weak.results[0].status == RequirementStatus.SATISFIED
+    assert eval_result_weak.status == TaskStatus.DONE
+

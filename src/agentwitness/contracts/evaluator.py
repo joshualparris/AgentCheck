@@ -19,6 +19,7 @@ from agentwitness.ledger import Ledger
 from agentwitness.models import (
     ExecutionStatus,
     PolicyDecision,
+    PolicyEvaluation,
     Receipt,
     SecretScanEvidence,
     ProtectedSectionsEvidence,
@@ -114,7 +115,8 @@ class ContractEvaluator:
             cwd=cwd or os.getcwd(),
             resolved_executable=executable,
             argv=argv,
-            policy_decision=PolicyDecision.ALLOW,
+            policy_evaluation=PolicyEvaluation.NOT_APPLICABLE,
+            policy_decision=None,
             policy_reason="Independent verification observation.",
             execution_status=ExecutionStatus.SUCCEEDED,
             provenance=provenance,
@@ -293,7 +295,7 @@ class ContractEvaluator:
         if violating:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=violating, explanation="Denied policy actions were recorded in this task session.")
             
-        bypassed = [r.receipt_id for r in receipts if r.policy_decision in (PolicyDecision.NOT_EVALUATED, PolicyDecision.BYPASSED)]
+        bypassed = [r.receipt_id for r in receipts if r.policy_evaluation in (PolicyEvaluation.NOT_EVALUATED, PolicyEvaluation.BYPASSED)]
         if bypassed:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=bypassed, explanation="Some actions in this session were not evaluated by the policy engine (e.g. transcript imports).")
             

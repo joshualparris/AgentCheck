@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
 
 from agentwitness.models import (
-    Receipt, PolicyDecision, ExecutionStatus, ProcessEvidence, 
+    Receipt, PolicyEvaluation, ExecutionStatus, ProcessEvidence, 
     Provenance, TranscriptIntegrityEvidence, EvidenceAdapter
 )
 from agentwitness.broker import parse_pytest_output
@@ -79,19 +79,24 @@ class AntigravityAdapter:
                     task_match = re.search(r"Tool is running as a background task with task id: (\S+)", content)
                     if task_match:
                         task_id = task_match.group(1)
-                        # The task output matches the very first pending sync command
-                        if sync_queue:
+                        if len(sync_queue) == 1:
                             target_key = sync_queue.pop(0)
                             task_id_to_command[task_id] = target_key
                         else:
-                            stats["ambiguous"] += 1
+                            # Too many pending commands, cannot safely guess which one this task_id belongs to.
+                            # Mark all currently pending sync commands as ambiguous and clear the queue.
+                            stats["ambiguous"] += len(sync_queue)
+                            for k in sync_queue:
+                                pending_commands.pop(k, None)
+                            sync_queue.clear()
+                            stats["ambiguous"] += 1 # The result itself is also orphaned
                         continue
 
                     exit_match = re.search(r"The command exited with code (\d+)", content)
                     output_match = re.search(r"Output:\n(.*)", content, re.DOTALL)
                     
                     if exit_match:
-                        if sync_queue:
+                        if len(sync_queue) == 1:
                             target_key = sync_queue.pop(0)
                             cmd_info = pending_commands.pop(target_key)
                             self._process_command_result(
@@ -102,6 +107,10 @@ class AntigravityAdapter:
                                 result_raw_event, result_id
                             )
                         else:
+                            stats["ambiguous"] += len(sync_queue)
+                            for k in sync_queue:
+                                pending_commands.pop(k, None)
+                            sync_queue.clear()
                             stats["ambiguous"] += 1
 
                 elif data.get("type") == "SYSTEM_MESSAGE" and data.get("source") == "SYSTEM":
@@ -182,7 +191,8 @@ class AntigravityAdapter:
             cwd=cmd_info["cwd"],
             resolved_executable=resolved_executable,
             argv=argv,
-            policy_decision=PolicyDecision.NOT_EVALUATED,
+            policy_evaluation=PolicyEvaluation.NOT_EVALUATED,
+            policy_decision=None,
             policy_reason="Imported from transcript; not evaluated by broker",
             execution_status=execution_status,
             provenance=Provenance.TRANSCRIPT_IMPORTED,

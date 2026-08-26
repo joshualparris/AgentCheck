@@ -83,7 +83,7 @@ def test_ledger_v1_migration(temp_ledger):
 
     receipts_after = temp_ledger.read_all()
     assert len(receipts_after) == 2
-    assert receipts_after[1].schema_version == 4
+    assert receipts_after[1].schema_version == 5
 
 def test_receipt_default_schema_version():
     r = Receipt(
@@ -91,4 +91,4 @@ def test_receipt_default_schema_version():
         cwd="/", resolved_executable="echo", argv=["test"], policy_decision=PolicyDecision.ALLOW,
         execution_status=ExecutionStatus.SUCCEEDED
     )
-    assert r.schema_version == 4
+    assert r.schema_version == 5

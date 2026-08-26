@@ -117,7 +117,6 @@ def test_v2_receipt_crypto_survives_v3_model_and_append(tmp_path):
         "argv": [],
         "policy_decision": "ALLOW",
         "policy_reason": None,
-        "execution_status": "SUCCEEDED",
         "environmental_evidence": [
             {
                 "type": "pytest",
@@ -165,7 +164,7 @@ def test_v2_receipt_crypto_survives_v3_model_and_append(tmp_path):
             ],
         )
     )
-    assert ledger.read_all()[1].schema_version == 4
+    assert ledger.read_all()[1].schema_version == 5
     assert ledger.verify_chain() is True
 
 

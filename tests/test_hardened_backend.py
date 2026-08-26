@@ -120,7 +120,7 @@ def test_missing_remote_sha_cannot_produce_remote_verified(backend, key_env):
     with patch("requests.post") as mock_post:
         record = {"status": "PASS", "evidence": {
             "git_ls_remote": {"stdout_snippet": ""},
-            "git_fetch": {"exit_code": 0}
+            "remote_lookup_succeeded": True
         }}
         record = sign_record(record, key_env)
         mock_resp = MagicMock()
@@ -135,7 +135,7 @@ def test_failed_git_fetch_cannot_produce_remote_verified(backend, key_env):
     with patch("requests.post") as mock_post:
         record = {"status": "PASS", "evidence": {
             "git_ls_remote": {"stdout_snippet": "abcdef refs/heads/main"},
-            "git_fetch": {"exit_code": 1}
+            "remote_lookup_succeeded": False
         }}
         record = sign_record(record, key_env)
         mock_resp = MagicMock()
@@ -159,7 +159,7 @@ def test_local_head_remote_head_mismatch_not_verified(backend, key_env):
         record = {"status": "PASS", "evidence": {
             "git_rev_parse_head": {"stdout_snippet": "a" * 40},
             "git_ls_remote": {"stdout_snippet": ("b" * 40) + " refs/heads/main"},
-            "git_fetch": {"exit_code": 0}
+            "remote_lookup_succeeded": True
         }}
         record = sign_record(record, key_env)
         mock_resp = MagicMock()
@@ -175,7 +175,7 @@ def test_local_head_remote_head_match_verified(backend, key_env):
         record = {"status": "PASS", "evidence": {
             "git_rev_parse_head": {"stdout_snippet": "a" * 40},
             "git_ls_remote": {"stdout_snippet": ("a" * 40) + " refs/heads/main"},
-            "git_fetch": {"exit_code": 0}
+            "remote_lookup_succeeded": True
         }}
         record = sign_record(record, key_env)
         mock_resp = MagicMock()
@@ -191,7 +191,7 @@ def test_malformed_sha_not_verified(backend, key_env):
         record = {"status": "PASS", "evidence": {
             "git_rev_parse_head": {"stdout_snippet": "short"},
             "git_ls_remote": {"stdout_snippet": "short refs/heads/main"},
-            "git_fetch": {"exit_code": 0}
+            "remote_lookup_succeeded": True
         }}
         record = sign_record(record, key_env)
         mock_resp = MagicMock()
@@ -284,12 +284,11 @@ def test_integration_pushed_real_schema(backend, key_env, tmp_path):
     client = TestClient(agy_service.app)
 
     worker_evidence = {
-        "git_fetch": {"exit_code": 0, "stdout_snippet": ""},
+        "git_remote_url": {"exit_code": 0, "stdout_snippet": "https://github.com/foo/bar.git"},
         "git_status": {"exit_code": 0, "stdout_snippet": ""},
         "git_rev_parse_head": {"exit_code": 0, "stdout_snippet": "a" * 40},
         "git_ls_remote": {"exit_code": 0, "stdout_snippet": f"{'a'*40} refs/heads/main"},
-        "local_branch": "main",
-        "git_remote_url": {"exit_code": 0, "stdout_snippet": "https://github.com/foo/bar.git"}
+        "local_branch": "main"
     }
     
     job_nonce = "test-job-id"
@@ -396,3 +395,55 @@ def test_integration_inconsistent_tests(backend, key_env, tmp_path):
                 with patch.object(backend, "_certify", side_effect=mock_certify):
                     ev = backend.get_tests_evidence("C:/fake", "python-full")
                     assert ev is None, f"Expected validation failure for {worker_evidence}"
+
+def test_integration_stale_hardened_evidence(backend, key_env, tmp_path):
+    import agy_service
+    from fastapi.testclient import TestClient
+    from unittest.mock import patch, MagicMock
+    import json, hmac, hashlib
+    from agentwitness.evidence.workspace import workspace_fingerprint
+    
+    agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
+    agy_service.private_key = key_env
+    client = TestClient(agy_service.app)
+    
+    fp, fp_count = workspace_fingerprint(str(tmp_path))
+    
+    worker_evidence = {
+        "exit_code": 0,
+        "tests": 10,
+        "passed": 10,
+        "failures": 0,
+        "skipped": 0,
+        "workspace_fingerprint": fp,
+        "workspace_file_count": fp_count
+    }
+    
+    canonical = json.dumps(worker_evidence, sort_keys=True).encode("utf-8")
+    sig = hmac.new(b"test-secret", canonical, hashlib.sha256).hexdigest()
+    
+    with patch("agy_service.get_secret", return_value=b"test-secret"):
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.status_code = 200
+            mock_resp.json.return_value = {"evidence": worker_evidence, "signature": sig}
+            mock_post.return_value = mock_resp
+            
+            def mock_certify(claim, **kwargs):
+                resp = client.post("/certify", json={"claim": claim, **kwargs})
+                if resp.status_code == 200 and resp.json()["status"] == "PASS":
+                    return resp.json()["evidence"]
+                return None
+                
+            with patch.object(backend, "_certify", side_effect=mock_certify):
+                ev = backend.get_tests_evidence(str(tmp_path), "python-full")
+                assert ev is not None
+                assert ev.workspace_fingerprint == fp
+                
+                # Now modify the workspace to make it stale
+                (tmp_path / "new_file.py").write_text("print('hello')")
+                
+                new_fp, _ = workspace_fingerprint(str(tmp_path))
+                assert ev.workspace_fingerprint != new_fp
+                
+                # The evaluator will reject it because evidence fingerprint != current fingerprint

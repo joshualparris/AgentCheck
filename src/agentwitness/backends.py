@@ -105,7 +105,8 @@ class LLMAccountabilityBackend(VerificationBackend):
             failed=evidence.get("failures"),
             skipped=evidence.get("skipped"),
             exit_code=exit_code,
-            workspace_file_count=None
+            workspace_fingerprint=evidence.get("workspace_fingerprint"),
+            workspace_file_count=evidence.get("workspace_file_count")
         )
 
     def get_push_evidence(self, cwd: str) -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
@@ -130,13 +131,13 @@ class LLMAccountabilityBackend(VerificationBackend):
         if not ls_remote_sha:
             ls_remote_sha = evidence.get("git_rev_parse_upstream", {}).get("stdout_snippet", "").strip()
             
-        fetch_succeeded = evidence.get("fetch_succeeded", False) or (evidence.get("git_fetch", {}).get("exit_code") == 0)
+        remote_lookup_succeeded = evidence.get("remote_lookup_succeeded", False) or (evidence.get("git_remote_url", {}).get("exit_code") == 0)
         
         def is_valid_sha(s):
             return bool(s and len(s) >= 40 and all(c in "0123456789abcdefABCDEF" for c in s))
 
-        # We must have valid SHAs, fetch must succeed, and they must exactly match
-        if is_valid_sha(head) and is_valid_sha(ls_remote_sha) and fetch_succeeded:
+        # We must have valid SHAs, remote lookup must succeed, and they must exactly match
+        if is_valid_sha(head) and is_valid_sha(ls_remote_sha) and remote_lookup_succeeded:
             remote_verified = (head == ls_remote_sha)
         else:
             remote_verified = False
@@ -145,7 +146,7 @@ class LLMAccountabilityBackend(VerificationBackend):
             local_head=head,
             remote_head=ls_remote_sha,
             remote_verified=remote_verified,
-            fetch_succeeded=fetch_succeeded
+            fetch_succeeded=remote_lookup_succeeded
         )
         
         return local_ev, remote_ev

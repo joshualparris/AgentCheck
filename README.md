@@ -69,3 +69,27 @@ Future work includes:
 - Optional untrusted LLM-based claim extraction
 - Cross-agent reliability history
 - Definition-of-Done contracts
+
+## Definition-of-Done Contracts (v0.2)
+AgentWitness v0.2 introduces Task Contracts to independently define and verify the "DONE" state of a task based on objective environmental evidence. Agent prose (e.g. "I finished the task") never controls task status.
+
+Create a contract in YAML:
+`yaml
+task_id: agentwitness-example
+title: Example coding task
+requirements:
+  - type: tests_pass
+  - type: local_commit_exists
+  - type: remote_sha_match
+  - type: remote_ci_pass
+  - type: clean_worktree
+  - type: no_policy_violations
+`
+
+Create and verify it via the CLI:
+`powershell
+aw task create contract.yaml
+aw task status agentwitness-example
+`
+
+AgentWitness will evaluate every requirement directly from the cryptographic ledger and the remote environment (e.g., GitHub CI). The task is only DONE when all requirements are fully satisfied.

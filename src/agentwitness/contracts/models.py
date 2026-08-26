@@ -1,0 +1,57 @@
+from enum import Enum
+from typing import List, Dict, Any, Optional
+from pydantic import BaseModel, Field
+import hashlib
+import json
+
+class RequirementType(str, Enum):
+    TESTS_PASS = "tests_pass"
+    LOCAL_COMMIT_EXISTS = "local_commit_exists"
+    REMOTE_SHA_MATCH = "remote_sha_match"
+    REMOTE_CI_PASS = "remote_ci_pass"
+    CLEAN_WORKTREE = "clean_worktree"
+    NO_POLICY_VIOLATIONS = "no_policy_violations"
+
+class RequirementStatus(str, Enum):
+    SATISFIED = "SATISFIED"
+    UNSATISFIED = "UNSATISFIED"
+    UNVERIFIED = "UNVERIFIED"
+    CONTRADICTED = "CONTRADICTED"
+    BLOCKED = "BLOCKED"
+    ERROR = "ERROR"
+
+class TaskStatus(str, Enum):
+    IN_PROGRESS = "IN_PROGRESS"
+    BLOCKED = "BLOCKED"
+    FAILED = "FAILED"
+    READY_FOR_VERIFICATION = "READY_FOR_VERIFICATION"
+    DONE = "DONE"
+
+class Requirement(BaseModel):
+    type: RequirementType
+    required: bool = True
+    parameters: Dict[str, Any] = Field(default_factory=dict)
+
+class RequirementResult(BaseModel):
+    requirement: Requirement
+    status: RequirementStatus
+    evidence_receipt_ids: List[str] = Field(default_factory=list)
+    explanation: str
+
+class TaskContract(BaseModel):
+    contract_version: int = 1
+    task_id: str
+    session_id: str
+    title: str
+    requirements: List[Requirement]
+    created_at: str
+
+    def canonical_hash(self) -> str:
+        data = self.model_dump()
+        payload = json.dumps(data, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+class TaskEvaluation(BaseModel):
+    contract: TaskContract
+    status: TaskStatus
+    results: List[RequirementResult]

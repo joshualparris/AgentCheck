@@ -6,11 +6,106 @@ from agentwitness.broker import WitnessBroker
 from agentwitness.claimguard import ClaimGuard
 from agentwitness.ledger import Ledger
 from agentwitness.models import PolicyDecision, ExecutionStatus, ProcessEvidence, ExecutionFailureEvidence
+from agentwitness.contracts.models import TaskContract, Requirement, RequirementType, TaskStatus, RequirementStatus
+from agentwitness.contracts.storage import ContractStorage
+from agentwitness.contracts.evaluator import ContractEvaluator
+import yaml
+from datetime import datetime, timezone
 
 app = typer.Typer(help="AgentWitness - Independent verification layer for AI agents.")
+task_app = typer.Typer(help="Manage Definition-of-Done task contracts.")
+app.add_typer(task_app, name="task")
+
 console = Console()
 
-@app.command()
+@task_app.command("create")
+def task_create(file: str = typer.Argument(...)):
+    """Create a new task contract from a YAML definition."""
+    with open(file, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+        
+    reqs = []
+    for r_data in data.get("requirements", []):
+        reqs.append(Requirement(
+            type=RequirementType(r_data["type"]),
+            required=r_data.get("required", True),
+            parameters=r_data.get("parameters", {})
+        ))
+        
+    contract = TaskContract(
+        task_id=data["task_id"],
+        session_id=data.get("session_id", data["task_id"]),
+        title=data.get("title", data["task_id"]),
+        requirements=reqs,
+        created_at=datetime.now(timezone.utc).isoformat()
+    )
+    
+    storage = ContractStorage()
+    storage.save(contract)
+    console.print(f"[bold green]Task contract '{contract.task_id}' created successfully.[/bold green]")
+
+def print_task_evaluation(eval_result):
+    console.print(f"\n[bold]AgentWitness Task: {eval_result.contract.title}[/bold]")
+    console.print("─" * 40)
+    
+    for res in eval_result.results:
+        req = res.requirement
+        name = req.type.value.replace("_", " ").capitalize()
+        if res.status == RequirementStatus.SATISFIED:
+            status_text = "[bold green]✅ SATISFIED[/bold green]"
+        elif res.status == RequirementStatus.UNSATISFIED:
+            status_text = "[bold red]❌ UNSATISFIED[/bold red]"
+        elif res.status == RequirementStatus.UNVERIFIED:
+            status_text = "[bold yellow]⏳ UNVERIFIED[/bold yellow]"
+        elif res.status == RequirementStatus.CONTRADICTED:
+            status_text = "[bold red]❗ CONTRADICTED[/bold red]"
+        else:
+            status_text = f"[dim]{res.status.value}[/dim]"
+            
+        console.print(f"{name:<25} {status_text}")
+        if res.status != RequirementStatus.SATISFIED:
+             console.print(f"  [dim]{res.explanation}[/dim]")
+             
+    console.print("\n[bold]Overall[/bold]")
+    console.print("─" * 40)
+    
+    if eval_result.status == TaskStatus.DONE:
+        console.print("[bold green]✅ DONE[/bold green]")
+    elif eval_result.status == TaskStatus.FAILED:
+        console.print("[bold red]🔴 FAILED[/bold red]\n\n[bold]NOT DONE[/bold]")
+    elif eval_result.status == TaskStatus.READY_FOR_VERIFICATION:
+        console.print("[bold yellow]⏳ READY FOR VERIFICATION[/bold yellow]\n\n[bold]NOT DONE[/bold]")
+    else:
+         console.print(f"{eval_result.status.value}\n\n[bold]NOT DONE[/bold]")
+
+@task_app.command("status")
+def task_status(task_id: str):
+    """View the status of a task contract."""
+    storage = ContractStorage()
+    contract = storage.load(task_id)
+    if not contract:
+        console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
+        raise typer.Exit(1)
+        
+    evaluator = ContractEvaluator(Ledger())
+    eval_result = evaluator.evaluate(contract)
+    print_task_evaluation(eval_result)
+
+@task_app.command("verify")
+def task_verify(task_id: str):
+    """Evaluate a task contract and exit with a non-zero code if it is not DONE."""
+    storage = ContractStorage()
+    contract = storage.load(task_id)
+    if not contract:
+        console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
+        raise typer.Exit(1)
+        
+    evaluator = ContractEvaluator(Ledger())
+    eval_result = evaluator.evaluate(contract)
+    print_task_evaluation(eval_result)
+    
+    if eval_result.status != TaskStatus.DONE:
+        raise typer.Exit(1)
 def run(command: str, args: list[str] = typer.Argument(None), session_id: Optional[str] = typer.Option(None, "--session-id")):
     """Run a command through the Witness Broker."""
     broker = WitnessBroker()

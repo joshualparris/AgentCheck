@@ -40,7 +40,8 @@ class ContractEvaluator:
         self.backend = backend or LocalBackend()
         self._active_session: Optional[str] = None
 
-    def _meets_provenance(self, receipt, min_provenance) -> bool:
+    @staticmethod
+    def _provenance_strength(prov) -> int:
         from agentwitness.models import Provenance
         strengths = {
             Provenance.TRANSCRIPT_IMPORTED: 0,
@@ -49,7 +50,10 @@ class ContractEvaluator:
             Provenance.BROKER_WITNESSED: 3,
             Provenance.HARDENED_OBSERVED: 4,
         }
-        return strengths.get(receipt.provenance, 0) >= strengths.get(min_provenance, 0)
+        return strengths.get(prov, 0)
+
+    def _meets_provenance(self, receipt, min_provenance) -> bool:
+        return self._provenance_strength(receipt.provenance) >= self._provenance_strength(min_provenance)
 
     @staticmethod
     def _ev_type(ev) -> str:
@@ -82,7 +86,7 @@ class ContractEvaluator:
             return "Tampering detected: contract hash does not match its signed creation anchor."
         return None
 
-    def evaluate(self, contract: TaskContract) -> TaskEvaluation:
+    def evaluate(self, contract: TaskContract, min_provenance_floor: Optional["Provenance"] = None) -> TaskEvaluation:
         self._active_session = contract.session_id
         all_receipts = self.ledger.read_all()
 
@@ -96,7 +100,7 @@ class ContractEvaluator:
             )
 
         session_receipts = [r for r in all_receipts if r.session_id == contract.session_id]
-        results = [self._evaluate_requirement(req, session_receipts) for req in contract.requirements]
+        results = [self._evaluate_requirement(req, session_receipts, min_provenance_floor) for req in contract.requirements]
 
         required = [r for r in results if r.requirement.required]
         if any(r.status in {RequirementStatus.UNSATISFIED, RequirementStatus.CONTRADICTED, RequirementStatus.ERROR} for r in required):
@@ -129,9 +133,14 @@ class ContractEvaluator:
         self.ledger.append(receipt)
         return receipt.receipt_id
 
-    def _evaluate_requirement(self, req: Requirement, receipts: list) -> RequirementResult:
+    def _evaluate_requirement(self, req: Requirement, receipts: list, min_provenance_floor: Optional["Provenance"] = None) -> RequirementResult:
+        actual_min = req.min_provenance
+        if min_provenance_floor:
+            if self._provenance_strength(min_provenance_floor) > self._provenance_strength(actual_min):
+                actual_min = min_provenance_floor
+                
         # Filter receipts to only those that meet the minimum provenance
-        valid_receipts = [r for r in receipts if self._meets_provenance(r, req.min_provenance)]
+        valid_receipts = [r for r in receipts if self._meets_provenance(r, actual_min)]
         
         dispatch = {
             RequirementType.TESTS_PASS: self._eval_tests_pass,

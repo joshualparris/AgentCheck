@@ -56,7 +56,11 @@ class LLMAccountabilityBackend(VerificationBackend):
             canonical_record_for_sig = dict(record)
             del canonical_record_for_sig["signature_ed25519"]
             
-            pub_key_path = os.environ.get("AGY_PUBLIC_KEY_PATH", "C:/ProgramData/AGYVerifier/public.pem")
+            if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("AGY_ALLOW_TEST_KEY_OVERRIDE") == "1":
+                pub_key_path = os.environ.get("AGY_PUBLIC_KEY_PATH", "C:/ProgramData/AGYVerifier/public.pem")
+            else:
+                pub_key_path = "C:/ProgramData/AGYVerifier/public.pem"
+            
             with open(pub_key_path, "rb") as f:
                 pub_key = serialization.load_pem_public_key(f.read())
                 
@@ -129,8 +133,14 @@ class LLMAccountabilityBackend(VerificationBackend):
             
         fetch_succeeded = (evidence.get("git_fetch", {}).get("exit_code") == 0)
         
-        # Only true if we have a remote sha and fetch succeeded.
-        remote_verified = bool(ls_remote_sha and fetch_succeeded)
+        def is_valid_sha(s):
+            return bool(s and len(s) >= 40 and all(c in "0123456789abcdefABCDEF" for c in s))
+
+        # We must have valid SHAs, fetch must succeed, and they must exactly match
+        if is_valid_sha(head) and is_valid_sha(ls_remote_sha) and fetch_succeeded:
+            remote_verified = (head == ls_remote_sha)
+        else:
+            remote_verified = False
         
         remote_ev = RemoteGitEvidence(
             local_head=head,

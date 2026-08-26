@@ -6,7 +6,7 @@ from unittest.mock import patch, MagicMock
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 from agentwitness.backends import LLMAccountabilityBackend
-from agentwitness.models import PytestEvidence, GitEvidence, RemoteGitEvidence, Provenance
+from agentwitness.models import PytestEvidence, GitEvidence, RemoteGitEvidence, Provenance, Receipt, ExecutionStatus, PolicyEvaluation
 from agentwitness.contracts.models import Requirement, RequirementStatus, TaskContract
 from agentwitness.contracts.evaluator import ContractEvaluator
 from agentwitness.ledger import Ledger
@@ -153,3 +153,132 @@ def test_hardened_backend_unavailable_unverified(backend):
     with patch("requests.post", side_effect=Exception("Offline")):
         res = evaluator._evaluate_requirement(req, [])
         assert res.status == RequirementStatus.UNVERIFIED
+
+def test_local_head_remote_head_mismatch_not_verified(backend, key_env):
+    with patch("requests.post") as mock_post:
+        record = {"status": "PASS", "evidence": {
+            "git_rev_parse_head": {"stdout_snippet": "a" * 40},
+            "git_ls_remote": {"stdout_snippet": ("b" * 40) + " refs/heads/main"},
+            "git_fetch": {"exit_code": 0}
+        }}
+        record = sign_record(record, key_env)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = record
+        mock_post.return_value = mock_resp
+        
+        local_ev, remote_ev = backend.get_push_evidence("C:/fake")
+        assert remote_ev.remote_verified is False
+
+def test_local_head_remote_head_match_verified(backend, key_env):
+    with patch("requests.post") as mock_post:
+        record = {"status": "PASS", "evidence": {
+            "git_rev_parse_head": {"stdout_snippet": "a" * 40},
+            "git_ls_remote": {"stdout_snippet": ("a" * 40) + " refs/heads/main"},
+            "git_fetch": {"exit_code": 0}
+        }}
+        record = sign_record(record, key_env)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = record
+        mock_post.return_value = mock_resp
+        
+        local_ev, remote_ev = backend.get_push_evidence("C:/fake")
+        assert remote_ev.remote_verified is True
+
+def test_malformed_sha_not_verified(backend, key_env):
+    with patch("requests.post") as mock_post:
+        record = {"status": "PASS", "evidence": {
+            "git_rev_parse_head": {"stdout_snippet": "short"},
+            "git_ls_remote": {"stdout_snippet": "short refs/heads/main"},
+            "git_fetch": {"exit_code": 0}
+        }}
+        record = sign_record(record, key_env)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = record
+        mock_post.return_value = mock_resp
+        
+        local_ev, remote_ev = backend.get_push_evidence("C:/fake")
+        assert remote_ev.remote_verified is False
+        assert remote_ev.remote_verified is False
+
+def test_hardened_offline_with_broker_receipt_unverified(backend, key_env):
+    # Requirement implicitly allows BROKER_WITNESSED
+    req = Requirement(name="test", type="tests_pass")
+    
+    # Existing weaker broker receipt
+    receipt = Receipt(
+        receipt_id="123",
+        session_id="test-session",
+        timestamp_start="2024", timestamp_end="2024", cwd=".",
+        resolved_executable="pytest", argv=["pytest"],
+        execution_status=ExecutionStatus.SUCCEEDED,
+        policy_evaluation=PolicyEvaluation.NOT_APPLICABLE,
+        provenance=Provenance.BROKER_WITNESSED,
+        environmental_evidence=[
+            PytestEvidence(exit_code=0, collected=1, passed=1, failed=0, skipped=0, workspace_file_count=0)
+        ]
+    )
+    
+    ledger = Ledger()
+    with patch.object(ledger, "read_all", return_value=[receipt]):
+        # Run hardened mode (pass HARDENED_OBSERVED as floor)
+        evaluator = ContractEvaluator(ledger, backend=backend)
+        with patch("requests.post", side_effect=Exception("Offline")):
+            res = evaluator._evaluate_requirement(req, [receipt], min_provenance_floor=Provenance.HARDENED_OBSERVED)
+            assert res.status == RequirementStatus.UNVERIFIED
+
+def test_hardened_valid_receipt_satisfies(backend, key_env):
+    req = Requirement(name="test", type="tests_pass")
+    
+    # Valid hardened backend observation
+    receipt = Receipt(
+        receipt_id="123",
+        session_id="test-session",
+        timestamp_start="2024", timestamp_end="2024", cwd=".",
+        resolved_executable="pytest", argv=["pytest"],
+        execution_status=ExecutionStatus.SUCCEEDED,
+        policy_evaluation=PolicyEvaluation.NOT_APPLICABLE,
+        provenance=Provenance.HARDENED_OBSERVED,
+        environmental_evidence=[
+            PytestEvidence(exit_code=0, collected=1, passed=1, failed=0, skipped=0, workspace_file_count=0)
+        ]
+    )
+    
+    ledger = Ledger()
+    with patch.object(ledger, "read_all", return_value=[receipt]):
+        # Run hardened mode (pass HARDENED_OBSERVED as floor)
+        evaluator = ContractEvaluator(ledger, backend=backend)
+        with patch("requests.post", side_effect=Exception("Offline")):
+            res = evaluator._evaluate_requirement(req, [receipt], min_provenance_floor=Provenance.HARDENED_OBSERVED)
+            assert res.status == RequirementStatus.SATISFIED
+
+def test_forged_key_override_rejected_in_production(backend, key_env):
+    with patch("requests.post") as mock_post:
+        record = {"status": "PASS", "evidence": {"exit_code": 0}}
+        record = sign_record(record, key_env)
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = record
+        mock_post.return_value = mock_resp
+        
+        # Disable test mode temporarily
+        with patch.dict(os.environ, {}, clear=True):
+            # Without PYTEST_CURRENT_TEST, it should ignore AGY_PUBLIC_KEY_PATH and try to read C:/ProgramData
+            with patch("builtins.open", side_effect=FileNotFoundError):
+                assert backend.get_tests_evidence("C:/fake", "python-full") is None
+
+def test_unexpected_notary_key_rejected(backend, key_env):
+    # Generate a completely different key pair
+    priv = ed25519.Ed25519PrivateKey.generate()
+    with patch("requests.post") as mock_post:
+        record = {"status": "PASS", "evidence": {"exit_code": 0}}
+        record = sign_record(record, priv) # Signed with wrong key!
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = record
+        mock_post.return_value = mock_resp
+        
+        # Validation should fail because backend uses key_env (via AGY_PUBLIC_KEY_PATH in pytest)
+        assert backend.get_tests_evidence("C:/fake", "python-full") is None

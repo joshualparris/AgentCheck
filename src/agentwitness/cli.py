@@ -102,8 +102,12 @@ def task_status(task_id: str, hardened: bool = typer.Option(False, "--hardened",
         raise typer.Exit(1)
     
     from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
+    from agentwitness.models import Provenance
+    
     backend = LLMAccountabilityBackend() if hardened else LocalBackend()
-    print_task_evaluation(ContractEvaluator(Ledger(), backend=backend).evaluate(contract))
+    floor = Provenance.HARDENED_OBSERVED if hardened else None
+    
+    print_task_evaluation(ContractEvaluator(Ledger(), backend=backend).evaluate(contract, min_provenance_floor=floor))
 
 
 @task_app.command("verify")
@@ -116,8 +120,12 @@ def task_verify(task_id: str, hardened: bool = typer.Option(False, "--hardened",
         raise typer.Exit(1)
     
     from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
+    from agentwitness.models import Provenance
+    
     backend = LLMAccountabilityBackend() if hardened else LocalBackend()
-    eval_result = ContractEvaluator(Ledger(), backend=backend).evaluate(contract)
+    floor = Provenance.HARDENED_OBSERVED if hardened else None
+    
+    eval_result = ContractEvaluator(Ledger(), backend=backend).evaluate(contract, min_provenance_floor=floor)
     print_task_evaluation(eval_result)
     if eval_result.status != TaskStatus.DONE:
         raise typer.Exit(1)
@@ -203,6 +211,7 @@ def final_check(
     text: str = typer.Argument(..., help="The agent's proposed final answer or completion claim."),
     task_id: Optional[str] = typer.Option(None, "--task-id"),
     session_id: Optional[str] = typer.Option(None, "--session-id"),
+    hardened: bool = typer.Option(False, "--hardened", help="Use hardened verification backend"),
 ):
     """Stop-gate for Antigravity/Claude/Codex-style final answers."""
     claims = _audit_claims(text, session_id)
@@ -217,7 +226,14 @@ def final_check(
         if not contract:
             console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
             raise typer.Exit(1)
-        evaluation = ContractEvaluator(Ledger()).evaluate(contract)
+            
+        from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
+        from agentwitness.models import Provenance
+        
+        backend = LLMAccountabilityBackend() if hardened else LocalBackend()
+        floor = Provenance.HARDENED_OBSERVED if hardened else None
+        
+        evaluation = ContractEvaluator(Ledger(), backend=backend).evaluate(contract, min_provenance_floor=floor)
         print_task_evaluation(evaluation)
         task_ok = evaluation.status == TaskStatus.DONE
 

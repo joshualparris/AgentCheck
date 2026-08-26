@@ -38,6 +38,7 @@ class Provenance(str, Enum):
     LIVE_OBSERVED = "LIVE_OBSERVED"
     REMOTE_OBSERVED = "REMOTE_OBSERVED"
     TRANSCRIPT_IMPORTED = "TRANSCRIPT_IMPORTED"
+    HARDENED_OBSERVED = "HARDENED_OBSERVED"
 
 
 class EvidenceBase(BaseModel):
@@ -53,13 +54,13 @@ class ProcessEvidence(EvidenceBase):
 
 class PytestEvidence(EvidenceBase):
     type: str = "pytest"
-    collected: int
-    passed: int
-    failed: int
-    skipped: int
+    collected: Optional[int] = None
+    passed: Optional[int] = None
+    failed: Optional[int] = None
+    skipped: Optional[int] = None
     exit_code: int
     workspace_fingerprint: Optional[str] = None
-    workspace_file_count: int = 0
+    workspace_file_count: Optional[int] = None
 
 
 class TranscriptIntegrityEvidence(EvidenceBase):

@@ -1,8 +1,14 @@
 import abc
+import json
+import base64
 from typing import Optional, Tuple
 import requests
 from agentwitness.models import PytestEvidence, GitEvidence, RemoteGitEvidence, Provenance
 import os
+from cryptography.hazmat.primitives import serialization
+
+# In a real environment, this might be pinned or downloaded, but for now we read it from the Notary's path
+PUB_KEY_PATH = os.environ.get("AGY_PUBLIC_KEY_PATH", "C:/ProgramData/AGYVerifier/public.pem")
 
 class VerificationBackend(abc.ABC):
     @property
@@ -25,7 +31,6 @@ class LocalBackend(VerificationBackend):
         return Provenance.LIVE_OBSERVED
 
     def get_tests_evidence(self, cwd: str, profile: str) -> Optional[PytestEvidence]:
-        # AgentWitness traditionally doesn't invoke tests live, it watches the broker.
         return None
 
     def get_push_evidence(self, cwd: str) -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
@@ -39,9 +44,30 @@ class LLMAccountabilityBackend(VerificationBackend):
 
     @property
     def provenance(self) -> Provenance:
-        # Currently using BROKER_WITNESSED as the highest available standard in AgentWitness.
-        # Alternatively, we could add HARDENED_OBSERVED.
-        return Provenance.BROKER_WITNESSED
+        return Provenance.HARDENED_OBSERVED
+
+    def _verify_signature(self, record: dict) -> bool:
+        if "signature_ed25519" not in record:
+            return False
+            
+        try:
+            sig_b64 = record["signature_ed25519"]
+            sig_bytes = base64.b64decode(sig_b64)
+            canonical_record_for_sig = dict(record)
+            del canonical_record_for_sig["signature_ed25519"]
+            
+            pub_key_path = os.environ.get("AGY_PUBLIC_KEY_PATH", "C:/ProgramData/AGYVerifier/public.pem")
+            with open(pub_key_path, "rb") as f:
+                pub_key = serialization.load_pem_public_key(f.read())
+                
+            pub_key.verify(
+                sig_bytes,
+                json.dumps(canonical_record_for_sig, sort_keys=True).encode("utf-8")
+            )
+            return True
+        except Exception as e:
+            print(f"Verify failed: {e}")
+            return False
 
     def _certify(self, claim: str, **kwargs) -> dict:
         payload = {"claim": claim, **kwargs}
@@ -52,6 +78,11 @@ class LLMAccountabilityBackend(VerificationBackend):
             record = resp.json()
             if record.get("status") != "PASS":
                 return {}
+                
+            # Verify the Ed25519 signature independently!
+            if not self._verify_signature(record):
+                return {}
+                
             return record.get("evidence", {})
         except Exception:
             return {}
@@ -62,16 +93,15 @@ class LLMAccountabilityBackend(VerificationBackend):
             return None
         exit_code = evidence.get("exit_code", -1)
         
-        # Hardened backend does not parse pytest output for skipped/passed/collected numbers,
-        # it just verifies exit code under restricted user. 
-        # We will create a synthesized PytestEvidence.
+        # We do not hallucinate passed=1 or collected=1 here.
+        # It's up to the evaluator to handle missing metrics if it requires them.
         return PytestEvidence(
-            collected=1,  # Non-zero to satisfy ClaimGuard/Evaluator
-            passed=1 if exit_code == 0 else 0,
-            failed=1 if exit_code != 0 else 0,
-            skipped=0,
+            collected=None,
+            passed=None,
+            failed=None,
+            skipped=None,
             exit_code=exit_code,
-            workspace_file_count=0
+            workspace_file_count=None
         )
 
     def get_push_evidence(self, cwd: str) -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
@@ -83,7 +113,7 @@ class LLMAccountabilityBackend(VerificationBackend):
         local_branch = evidence.get("local_branch", "unknown")
         
         git_status_out = evidence.get("git_status", {}).get("stdout_snippet", "")
-        dirty = bool(git_status_out.strip())
+        dirty = bool(git_status_out.strip()) if git_status_out is not None else True # fail closed if unknown
         
         local_ev = GitEvidence(
             head=head,
@@ -97,11 +127,16 @@ class LLMAccountabilityBackend(VerificationBackend):
         if not ls_remote_sha:
             ls_remote_sha = evidence.get("git_rev_parse_upstream", {}).get("stdout_snippet", "").strip()
             
+        fetch_succeeded = (evidence.get("git_fetch", {}).get("exit_code") == 0)
+        
+        # Only true if we have a remote sha and fetch succeeded.
+        remote_verified = bool(ls_remote_sha and fetch_succeeded)
+        
         remote_ev = RemoteGitEvidence(
             local_head=head,
             remote_head=ls_remote_sha,
-            remote_verified=True,
-            fetch_succeeded=evidence.get("git_fetch", {}).get("exit_code") == 0
+            remote_verified=remote_verified,
+            fetch_succeeded=fetch_succeeded
         )
         
         return local_ev, remote_ev

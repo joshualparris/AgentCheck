@@ -46,7 +46,8 @@ class ContractEvaluator:
             Provenance.TRANSCRIPT_IMPORTED: 0,
             Provenance.REMOTE_OBSERVED: 1,
             Provenance.LIVE_OBSERVED: 2,
-            Provenance.BROKER_WITNESSED: 3
+            Provenance.BROKER_WITNESSED: 3,
+            Provenance.HARDENED_OBSERVED: 4,
         }
         return strengths.get(receipt.provenance, 0) >= strengths.get(min_provenance, 0)
 
@@ -155,21 +156,13 @@ class ContractEvaluator:
         profile = req.parameters.get("profile", "python-full")
         backend_ev = self.backend.get_tests_evidence(os.getcwd(), profile)
         if backend_ev is not None:
+            # We record the observation and put it at the end of the receipts list (most recent)
             receipt_id = self._record_observation(backend_ev, "pytest", ["--backend-verify", profile], provenance=self.backend.provenance)
-            if backend_ev.exit_code != 0 or backend_ev.failed > 0:
-                return RequirementResult(
-                    requirement=req,
-                    status=RequirementStatus.UNSATISFIED,
-                    evidence_receipt_ids=[receipt_id],
-                    explanation="Hardened backend reports tests failed."
-                )
-            return RequirementResult(
-                requirement=req,
-                status=RequirementStatus.SATISFIED,
-                evidence_receipt_ids=[receipt_id],
-                explanation="Hardened backend verified tests passed."
-            )
-
+            # Fetch the actual receipt object so we can run it through the normal loop
+            latest_receipt = self.ledger.get_latest_receipt()
+            if latest_receipt and latest_receipt.receipt_id == receipt_id:
+                receipts.append(latest_receipt)
+                
         for receipt in reversed(receipts):
             for ev in receipt.environmental_evidence:
                 if self._ev_type(ev) != "pytest":
@@ -177,8 +170,9 @@ class ContractEvaluator:
 
                 exit_code = self._ev_value(ev, "exit_code")
                 failed = self._ev_value(ev, "failed")
-                collected = self._ev_value(ev, "collected", 0)
-                if receipt.execution_status != ExecutionStatus.SUCCEEDED or exit_code != 0 or failed != 0:
+                collected = self._ev_value(ev, "collected")
+                
+                if receipt.execution_status != ExecutionStatus.SUCCEEDED or exit_code != 0 or (failed is not None and failed > 0):
                     return RequirementResult(
                         requirement=req,
                         status=RequirementStatus.UNSATISFIED,
@@ -187,12 +181,13 @@ class ContractEvaluator:
                     )
 
                 minimum_collected = int(req.parameters.get("minimum_collected", 1))
-                if collected < minimum_collected:
+                if collected is None or collected < minimum_collected:
+                    col_str = "an unknown number of" if collected is None else str(collected)
                     return RequirementResult(
                         requirement=req,
                         status=RequirementStatus.UNVERIFIED,
                         evidence_receipt_ids=[receipt.receipt_id],
-                        explanation=f"Pytest exited successfully but collected only {collected} test(s); at least {minimum_collected} are required.",
+                        explanation=f"Pytest exited successfully but collected {col_str} test(s); at least {minimum_collected} are required.",
                     )
 
                 allow_subset = bool(req.parameters.get("allow_subset", False))

@@ -4,6 +4,9 @@ from rich.panel import Panel
 from typing import Optional
 from agentwitness.broker import WitnessBroker
 from agentwitness.claimguard import ClaimGuard
+from agentwitness.claims.extractor import DeterministicExtractor
+from agentwitness.adapters.antigravity import AntigravityAdapter
+from pathlib import Path
 from agentwitness.ledger import Ledger
 from agentwitness.models import ExecutionStatus, Verdict
 from agentwitness.contracts.models import TaskContract, Requirement, RequirementType, TaskStatus, RequirementStatus
@@ -228,3 +231,24 @@ def log():
 
 if __name__ == "__main__":
     app()
+@app.command(name="sync-transcript")
+def sync_transcript(conversation_id: str):
+    """
+    Synchronize AgentWitness ledger with an Antigravity transcript.
+    """
+    app_data = Path.home() / ".gemini" / "antigravity"
+    transcript_path = app_data / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"
+    
+    if not transcript_path.exists():
+        console.print(f"[red]Error: Transcript not found at {transcript_path}[/red]")
+        raise typer.Exit(code=1)
+        
+    console.print(f"Parsing Antigravity transcript: {transcript_path}")
+    adapter = AntigravityAdapter(transcript_path)
+    receipts = adapter.parse_receipts()
+    
+    ledger = Ledger()
+    for receipt in receipts:
+        ledger.append(receipt)
+        
+    console.print(f"[green]Successfully imported {len(receipts)} execution receipts into the ledger.[/green]")

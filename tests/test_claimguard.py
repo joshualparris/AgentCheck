@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from agentwitness.ledger import Ledger
 from agentwitness.claimguard import ClaimGuard
-from agentwitness.models import Receipt, PolicyDecision, PytestEvidence
+from agentwitness.models import Receipt, PolicyDecision, PytestEvidence, ExecutionStatus
 
 @pytest.fixture
 def test_guard():
@@ -15,7 +15,7 @@ def test_claimguard_tests_passed_verified(test_guard):
     guard, ledger = test_guard
     r = Receipt(
         receipt_id="1", session_id="s", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW,
+        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED,
         environmental_evidence=[PytestEvidence(collected=5, passed=5, failed=0, skipped=0, exit_code=0)]
     )
     ledger.append(r)
@@ -28,7 +28,7 @@ def test_claimguard_tests_passed_contradicted(test_guard):
     guard, ledger = test_guard
     r = Receipt(
         receipt_id="1", session_id="s", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW,
+        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED,
         environmental_evidence=[PytestEvidence(collected=5, passed=3, failed=2, skipped=0, exit_code=1)]
     )
     ledger.append(r)
@@ -40,7 +40,7 @@ def test_claimguard_push_contradicted(test_guard):
     guard, ledger = test_guard
     r = Receipt(
         receipt_id="1", session_id="s", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="git", argv=["push"], policy_decision=PolicyDecision.REQUIRE_APPROVAL
+        cwd="/", resolved_executable="git", argv=["push"], policy_decision=PolicyDecision.REQUIRE_APPROVAL, execution_status=ExecutionStatus.NOT_ATTEMPTED
     )
     ledger.append(r)
     
@@ -57,7 +57,7 @@ def test_claimguard_push_false_remote_verified(test_guard):
     from agentwitness.models import RemoteGitEvidence
     r = Receipt(
         receipt_id="1", session_id="s", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="git", argv=["push"], policy_decision=PolicyDecision.ALLOW,
+        cwd="/", resolved_executable="git", argv=["push"], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED,
         environmental_evidence=[RemoteGitEvidence(local_head="a", remote_head="b", remote_verified=False)]
     )
     ledger.append(r)
@@ -74,7 +74,7 @@ def test_claimguard_semantic_implementation_with_evidence(test_guard):
     from agentwitness.models import GitEvidence
     r = Receipt(
         receipt_id="1", session_id="s", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="git", argv=["commit"], policy_decision=PolicyDecision.ALLOW,
+        cwd="/", resolved_executable="git", argv=["commit"], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED,
         environmental_evidence=[GitEvidence(head="a", branch="b", dirty=True, modified=["file.txt"])]
     )
     ledger.append(r)
@@ -85,7 +85,7 @@ def test_claimguard_session_isolation(test_guard):
     guard, ledger = test_guard
     r1 = Receipt(
         receipt_id="1", session_id="session1", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW,
+        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED,
         environmental_evidence=[PytestEvidence(collected=5, passed=5, failed=0, skipped=0, exit_code=0)]
     )
     ledger.append(r1)

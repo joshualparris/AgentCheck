@@ -3,7 +3,7 @@ import tempfile
 from unittest.mock import patch
 from agentwitness.broker import WitnessBroker
 from agentwitness.ledger import Ledger
-from agentwitness.policy import PolicyDecision
+from agentwitness.models import PolicyDecision, ExecutionStatus
 
 from pathlib import Path
 
@@ -41,4 +41,5 @@ def test_broker_stdout_stderr_hashes(temp_broker):
 
 def test_broker_policy_denial(temp_broker):
     receipt = temp_broker.run_command("git", ["push", "origin", "main"])
-    assert receipt.policy_decision == PolicyDecision.REQUIRE_APPROVAL
+    assert receipt.policy_decision == PolicyDecision.DENY
+    assert receipt.execution_status == ExecutionStatus.NOT_ATTEMPTED

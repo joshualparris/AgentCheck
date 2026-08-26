@@ -17,6 +17,12 @@ class PolicyDecision(str, Enum):
     DENY = "DENY"
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
 
+class ExecutionStatus(str, Enum):
+    NOT_ATTEMPTED = "NOT_ATTEMPTED"
+    SUCCEEDED = "SUCCEEDED"
+    FAILED = "FAILED"
+    ERROR = "ERROR"
+
 class EvidenceBase(BaseModel):
     type: str
 
@@ -64,6 +70,7 @@ class Receipt(BaseModel):
     argv: List[str]
     policy_decision: PolicyDecision
     policy_reason: Optional[str] = None
+    execution_status: ExecutionStatus
     environmental_evidence: List[EvidenceAdapter] = Field(default_factory=list)
     previous_hash: str = ""
     receipt_hash: str = ""

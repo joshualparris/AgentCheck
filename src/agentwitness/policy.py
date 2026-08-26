@@ -9,21 +9,20 @@ class PolicyResult:
 
 class PolicyGate:
     def __init__(self):
-        # Action, Rule Name, Pattern, Policy Decision, Reason
         self.rules = [
-            (re.compile(r"^git\s+push\s+.*(-f|--force)"), PolicyDecision.DENY, "git.force_push", "Force pushing is destructive."),
-            (re.compile(r"^git\s+reset\s+--hard"), PolicyDecision.DENY, "git.reset_hard", "Hard reset is destructive."),
-            (re.compile(r"^rm\s+-rf\s+/"), PolicyDecision.DENY, "system.root_delete", "Root deletion is prohibited."),
-            (re.compile(r"^(format|diskpart)\b"), PolicyDecision.DENY, "system.disk", "Destructive disk operations are prohibited."),
-            (re.compile(r"(Set-MpPreference|Disable-NetFirewallRule)"), PolicyDecision.DENY, "system.security", "Disabling security software is prohibited."),
-            (re.compile(r"^(sudo|runas)\b"), PolicyDecision.REQUIRE_APPROVAL, "system.elevation", "Privilege elevation requires approval."),
-            (re.compile(r"^(sc|systemctl)\b"), PolicyDecision.REQUIRE_APPROVAL, "system.service", "Service changes require approval."),
-            (re.compile(r"^reg\b"), PolicyDecision.REQUIRE_APPROVAL, "system.registry", "Registry changes require approval."),
-            (re.compile(r"^(del|rmdir|rm)\s+.*"), PolicyDecision.REQUIRE_APPROVAL, "file.delete", "File deletion requires approval."),
-            (re.compile(r"^git\s+push\b"), PolicyDecision.REQUIRE_APPROVAL, "git.remote_write", "Remote repository mutation requires human approval."),
-            (re.compile(r"^(choco|apt|yum|dnf|pip)\s+(install|remove|uninstall)|python\s+-m\s+pip\s+(install|remove|uninstall)"), PolicyDecision.REQUIRE_APPROVAL, "system.package", "Package installation requires approval."),
-            (re.compile(r"^git\s+commit\b"), PolicyDecision.ALLOW, "git.commit", "Local commit allowed."),
-            (re.compile(r"^(pytest|npm\s+test|cargo\s+test|go\s+test)\b"), PolicyDecision.ALLOW, "test.execute", "Test execution allowed."),
+            (re.compile(r"^git\s+push\s+.*(-f|--force)", re.IGNORECASE), PolicyDecision.DENY, "git.force_push", "Force pushing is destructive."),
+            (re.compile(r"^git\s+reset\s+--hard", re.IGNORECASE), PolicyDecision.DENY, "git.reset_hard", "Hard reset is destructive."),
+            (re.compile(r"^rm\s+-rf\s+/", re.IGNORECASE), PolicyDecision.DENY, "system.root_delete", "Root deletion is prohibited."),
+            (re.compile(r"^(format|diskpart)\b", re.IGNORECASE), PolicyDecision.DENY, "system.disk", "Destructive disk operations are prohibited."),
+            (re.compile(r"(Set-MpPreference|Disable-NetFirewallRule)", re.IGNORECASE), PolicyDecision.DENY, "system.security", "Disabling security software is prohibited."),
+            (re.compile(r"^(sudo|runas)\b", re.IGNORECASE), PolicyDecision.REQUIRE_APPROVAL, "system.elevation", "Privilege elevation requires approval."),
+            (re.compile(r"^(sc|systemctl)\b|(Start-Service|Stop-Service|Restart-Service)\b", re.IGNORECASE), PolicyDecision.REQUIRE_APPROVAL, "system.service", "Service changes require approval."),
+            (re.compile(r"^reg\b|(New-ItemProperty|Set-ItemProperty|Remove-ItemProperty)\b", re.IGNORECASE), PolicyDecision.REQUIRE_APPROVAL, "system.registry", "Registry changes require approval."),
+            (re.compile(r"^(del|rmdir|rm)\s+.*|(Remove-Item)\b", re.IGNORECASE), PolicyDecision.REQUIRE_APPROVAL, "file.delete", "File deletion requires approval."),
+            (re.compile(r"^git\s+push\b", re.IGNORECASE), PolicyDecision.REQUIRE_APPROVAL, "git.remote_write", "Remote repository mutation requires human approval."),
+            (re.compile(r"^(choco|apt|yum|dnf|pip|pip3)\s+(install|remove|uninstall)|python\d*\s+-m\s+pip\s+(install|remove|uninstall)", re.IGNORECASE), PolicyDecision.REQUIRE_APPROVAL, "system.package", "Package installation requires approval."),
+            (re.compile(r"^git\s+commit\b", re.IGNORECASE), PolicyDecision.ALLOW, "git.commit", "Local commit allowed."),
+            (re.compile(r"^(pytest|npm\s+test|cargo\s+test|go\s+test)\b", re.IGNORECASE), PolicyDecision.ALLOW, "test.execute", "Test execution allowed."),
         ]
 
     def check(self, resolved_executable: str, argv: List[str]) -> PolicyResult:

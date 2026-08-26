@@ -93,25 +93,31 @@ def print_task_evaluation(eval_result):
 
 
 @task_app.command("status")
-def task_status(task_id: str):
+def task_status(task_id: str, hardened: bool = typer.Option(False, "--hardened", help="Use hardened verification backend")):
     """View the independently evaluated status of a task contract."""
     storage = ContractStorage()
     contract = storage.load(task_id)
     if not contract:
         console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
         raise typer.Exit(1)
-    print_task_evaluation(ContractEvaluator(Ledger()).evaluate(contract))
+    
+    from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
+    backend = LLMAccountabilityBackend() if hardened else LocalBackend()
+    print_task_evaluation(ContractEvaluator(Ledger(), backend=backend).evaluate(contract))
 
 
 @task_app.command("verify")
-def task_verify(task_id: str):
+def task_verify(task_id: str, hardened: bool = typer.Option(False, "--hardened", help="Use hardened verification backend")):
     """Exit successfully only when every required DoD requirement is satisfied."""
     storage = ContractStorage()
     contract = storage.load(task_id)
     if not contract:
         console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
         raise typer.Exit(1)
-    eval_result = ContractEvaluator(Ledger()).evaluate(contract)
+    
+    from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
+    backend = LLMAccountabilityBackend() if hardened else LocalBackend()
+    eval_result = ContractEvaluator(Ledger(), backend=backend).evaluate(contract)
     print_task_evaluation(eval_result)
     if eval_result.status != TaskStatus.DONE:
         raise typer.Exit(1)

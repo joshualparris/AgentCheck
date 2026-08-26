@@ -32,9 +32,12 @@ from agentwitness.evidence.test_scope import classify_pytest_scope
 from agentwitness.evidence.protected import check_protected_sections
 
 
+from agentwitness.backends import VerificationBackend, LocalBackend
+
 class ContractEvaluator:
-    def __init__(self, ledger: Ledger):
+    def __init__(self, ledger: Ledger, backend: Optional[VerificationBackend] = None):
         self.ledger = ledger
+        self.backend = backend or LocalBackend()
         self._active_session: Optional[str] = None
 
     def _meets_provenance(self, receipt, min_provenance) -> bool:
@@ -149,6 +152,24 @@ class ContractEvaluator:
         return handler(req, valid_receipts)
 
     def _eval_tests_pass(self, req: Requirement, receipts: list) -> RequirementResult:
+        profile = req.parameters.get("profile", "python-full")
+        backend_ev = self.backend.get_tests_evidence(os.getcwd(), profile)
+        if backend_ev is not None:
+            receipt_id = self._record_observation(backend_ev, "pytest", ["--backend-verify", profile], provenance=self.backend.provenance)
+            if backend_ev.exit_code != 0 or backend_ev.failed > 0:
+                return RequirementResult(
+                    requirement=req,
+                    status=RequirementStatus.UNSATISFIED,
+                    evidence_receipt_ids=[receipt_id],
+                    explanation="Hardened backend reports tests failed."
+                )
+            return RequirementResult(
+                requirement=req,
+                status=RequirementStatus.SATISFIED,
+                evidence_receipt_ids=[receipt_id],
+                explanation="Hardened backend verified tests passed."
+            )
+
         for receipt in reversed(receipts):
             for ev in receipt.environmental_evidence:
                 if self._ev_type(ev) != "pytest":
@@ -248,12 +269,12 @@ class ContractEvaluator:
         branch = req.parameters.get("branch", "main")
         remote = req.parameters.get("remote", "origin")
         expected_repo = req.parameters.get("repository")
-        live = capture_remote_git_evidence(os.getcwd(), branch=branch, remote=remote)
+        
+        _, live = self.backend.get_push_evidence(os.getcwd())
         if live is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently inspect the current git remote.")
         
-        from agentwitness.models import Provenance
-        receipt_id = self._record_observation(live, "git", ["fetch", remote, branch], provenance=Provenance.REMOTE_OBSERVED)
+        receipt_id = self._record_observation(live, "git", ["fetch", remote, branch], provenance=self.backend.provenance)
         
         if expected_repo and (live.repository or "").lower() != expected_repo.lower():
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Observed repository {live.repository!r} does not match required {expected_repo}.")
@@ -279,12 +300,11 @@ class ContractEvaluator:
                 return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[latest_id], explanation="Recorded worktree state is dirty.")
             return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[latest_id], explanation="Recorded worktree state is clean.")
 
-        state = capture_git_state(os.getcwd())
+        state, _ = self.backend.get_push_evidence(os.getcwd())
         if state is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently read the current git worktree.")
         
-        from agentwitness.models import Provenance
-        receipt_id = self._record_observation(state, "git", ["status", "--porcelain"], provenance=Provenance.LIVE_OBSERVED)
+        receipt_id = self._record_observation(state, "git", ["status", "--porcelain"], provenance=self.backend.provenance)
         
         if state.dirty:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Current worktree is dirty ({len(state.modified)} changed path(s)).")

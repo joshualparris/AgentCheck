@@ -185,7 +185,7 @@ class AntigravityAdapter:
         
         receipt = Receipt(
             receipt_id=str(uuid.uuid4()),
-            session_id=self.conversation_id,
+            session_id=cmd_info.get("bound_session_id") or self.conversation_id,
             timestamp_start=cmd_info["start_time"],
             timestamp_end=end_time or datetime.now(timezone.utc).isoformat(),
             cwd=cmd_info["cwd"],

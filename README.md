@@ -16,8 +16,8 @@ AgentWitness separates the extraction of an agent's claims from the verification
 
 ## Features
 
-- **Witness Broker**: A proxy wrapper (`aw run -- <command>`) that strictly intercepts command execution with `shell=False`.
-- **Policy Gate**: Enforces granular ALLOW, DENY, and REQUIRE_APPROVAL policies. Blocked attempts become part of the immutable ledger.
+- **Witness Broker**: A proxy wrapper (`aw run -- <command>`) that intercepts wrapped commands with `shell=False`.
+- **Policy Gate**: Enforces granular ALLOW, DENY, and REQUIRE_APPROVAL policies. Blocked attempts become part of the tamper-evident ledger.
 - **Evidence Adapters**: Domain-specific parsers (like `PytestEvidence` and `RemoteGitEvidence`) extract state facts rather than just recording raw stdout logs.
 - **Cryptographic Ledger**: A hash-chained JSONL ledger where every receipt is signed with an Ed25519 signature.
 - **ClaimGuard**: A deterministic auditor that maps extracted AI claims (e.g., "tests passed") against cryptographic receipts.

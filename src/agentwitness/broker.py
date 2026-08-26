@@ -100,6 +100,8 @@ class WitnessBroker:
             
         except Exception as e:
             timestamp_end = datetime.now(timezone.utc).isoformat()
+            from agentwitness.models import ExecutionFailureEvidence
+            evidence_list.append(ExecutionFailureEvidence(error_message=str(e)))
             receipt = Receipt(
                 receipt_id=str(uuid.uuid4()),
                 session_id=self.session_id,
@@ -109,7 +111,7 @@ class WitnessBroker:
                 resolved_executable=resolved_executable,
                 argv=args,
                 policy_decision=PolicyDecision.ALLOW,
-                policy_reason="Execution failed due to exception",
+                policy_reason="Attempt permitted but execution failed",
                 environmental_evidence=evidence_list
             )
             self.ledger.append(receipt)

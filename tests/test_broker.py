@@ -24,7 +24,20 @@ def test_broker_successful_command(temp_broker):
 def test_broker_missing_executable(temp_broker):
     receipt = temp_broker.run_command("this_command_does_not_exist_xyz123", [])
     assert receipt.policy_decision == PolicyDecision.ALLOW
-    assert "Execution failed due to exception" in receipt.policy_reason
+    assert "execution failed" in receipt.policy_reason
+    assert receipt.environmental_evidence[0].type == "execution_failure"
+
+def test_broker_failing_command(temp_broker):
+    receipt = temp_broker.run_command("python", ["-c", "import sys; sys.exit(1)"])
+    assert receipt.policy_decision == PolicyDecision.ALLOW
+    assert receipt.environmental_evidence[0].exit_code == 1
+
+def test_broker_stdout_stderr_hashes(temp_broker):
+    receipt = temp_broker.run_command("python", ["-c", "import sys; sys.stdout.write('hello'); sys.stderr.write('error')"])
+    ev = receipt.environmental_evidence[0]
+    from agentwitness.crypto import hash_payload
+    assert ev.stdout_hash == hash_payload("hello")
+    assert ev.stderr_hash == hash_payload("error")
 
 def test_broker_policy_denial(temp_broker):
     receipt = temp_broker.run_command("git", ["push", "origin", "main"])

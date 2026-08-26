@@ -47,7 +47,11 @@ class RemoteGitEvidence(EvidenceBase):
     remote_head: str
     remote_verified: bool
 
-EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, EvidenceBase]
+class ExecutionFailureEvidence(EvidenceBase):
+    type: str = "execution_failure"
+    error_message: str
+
+EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, ExecutionFailureEvidence, EvidenceBase]
 
 class Receipt(BaseModel):
     receipt_id: str

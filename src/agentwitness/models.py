@@ -63,8 +63,11 @@ class TranscriptIntegrityEvidence(EvidenceBase):
     type: Literal["transcript_integrity"] = "transcript_integrity"
     source_path: str
     conversation_id: str
-    source_event_id: str
-    raw_event_hash: str
+    import_id: str
+    command_id: Optional[str] = None
+    result_id: Optional[str] = None
+    command_raw_event_hash: str
+    result_raw_event_hash: str
     import_timestamp: str
 
 

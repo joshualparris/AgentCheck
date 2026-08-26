@@ -22,6 +22,7 @@ class ExecutionStatus(str, Enum):
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
     ERROR = "ERROR"
+    UNKNOWN_LEGACY = "UNKNOWN_LEGACY"
 
 class EvidenceBase(BaseModel):
     type: str
@@ -60,6 +61,7 @@ class ExecutionFailureEvidence(EvidenceBase):
 EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, ExecutionFailureEvidence, EvidenceBase]
 
 class Receipt(BaseModel):
+    schema_version: int = 2
     receipt_id: str
     session_id: str
     parent_action_id: Optional[str] = None
@@ -70,7 +72,7 @@ class Receipt(BaseModel):
     argv: List[str]
     policy_decision: PolicyDecision
     policy_reason: Optional[str] = None
-    execution_status: ExecutionStatus
+    execution_status: ExecutionStatus = ExecutionStatus.UNKNOWN_LEGACY
     environmental_evidence: List[EvidenceAdapter] = Field(default_factory=list)
     previous_hash: str = ""
     receipt_hash: str = ""

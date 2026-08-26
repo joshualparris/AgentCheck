@@ -78,7 +78,9 @@ def audit(text: str, session_id: Optional[str] = typer.Option(None, "--session-i
         elif "PARTIALLY" in claim.verdict.value:
             has_partially_verified = True
 
-    if has_contradicted:
+    if not claims:
+         overall = "[bold yellow]NO CLAIMS EXTRACTED[/bold yellow]"
+    elif has_contradicted:
          overall = "[bold red]CONTRADICTED[/bold red]"
     elif has_unverified:
          overall = "[bold yellow]UNVERIFIED[/bold yellow]"

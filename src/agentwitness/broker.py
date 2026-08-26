@@ -7,10 +7,12 @@ from typing import List, Optional
 
 from agentwitness.models import Receipt, PolicyDecision, ExecutionStatus, EvidenceAdapter
 from agentwitness.ledger import Ledger
-from agentwitness.policy import PolicyGate, PolicyResult
+from agentwitness.policy import PolicyGate
 from agentwitness.evidence.process import extract_process_evidence
 from agentwitness.evidence.pytest import parse_pytest_output
 from agentwitness.evidence.git import capture_git_state, capture_remote_git_evidence
+from agentwitness.evidence.workspace import workspace_fingerprint
+
 
 class WitnessBroker:
     def __init__(self, ledger: Optional[Ledger] = None, policy_gate: Optional[PolicyGate] = None):
@@ -22,12 +24,10 @@ class WitnessBroker:
         active_session = session_id or self.session_id
         timestamp_start = datetime.now(timezone.utc).isoformat()
         resolved_executable = shutil.which(command) or command
-        
-        # Check policy before running
+
         policy_result = self.policy_gate.check(resolved_executable, args)
-        
         evidence_list: List[EvidenceAdapter] = []
-        
+
         decision = policy_result.decision
         if decision == PolicyDecision.REQUIRE_APPROVAL:
             if approval_callback and approval_callback(command, args, policy_result.reason):
@@ -35,10 +35,9 @@ class WitnessBroker:
             else:
                 decision = PolicyDecision.DENY
                 policy_result.reason = "Approval denied or no approval mechanism provided."
-        
+
         if decision == PolicyDecision.DENY:
             timestamp_end = datetime.now(timezone.utc).isoformat()
-            
             receipt = Receipt(
                 receipt_id=str(uuid.uuid4()),
                 session_id=active_session,
@@ -50,12 +49,11 @@ class WitnessBroker:
                 policy_decision=decision,
                 policy_reason=policy_result.reason,
                 execution_status=ExecutionStatus.NOT_ATTEMPTED,
-                environmental_evidence=evidence_list
+                environmental_evidence=evidence_list,
             )
             self.ledger.append(receipt)
             return receipt
-            
-        # Execute the command (shell=False)
+
         full_command = [resolved_executable] + args
         try:
             result = subprocess.run(
@@ -63,37 +61,38 @@ class WitnessBroker:
                 capture_output=True,
                 text=True,
                 cwd=os.getcwd(),
-                shell=False # Critical requirement
+                shell=False,
             )
             timestamp_end = datetime.now(timezone.utc).isoformat()
-            
-            # Base process evidence
             evidence_list.append(extract_process_evidence(result.returncode, result.stdout, result.stderr))
-            
-            # Domain-specific evidence
-            if command == "pytest" or command == "python" and "pytest" in args:
+
+            is_pytest = command == "pytest" or (command in {"python", "python3", "py"} and "pytest" in args)
+            if is_pytest:
                 pytest_ev = parse_pytest_output(result.returncode, result.stdout)
                 if pytest_ev:
-                     evidence_list.append(pytest_ev)
-                     
-            # Always try to capture git state after any command execution
-            try:
-                git_ev = capture_git_state(os.getcwd())
-                if git_ev:
-                    evidence_list.append(git_ev)
-                if command == "git" and "push" in args:
-                    branch = "main" # default for prototype
-                    for idx, arg in enumerate(args):
-                        if not arg.startswith("-") and arg != "push" and arg != "origin":
-                            branch = arg
+                    fingerprint, file_count = workspace_fingerprint(os.getcwd())
+                    pytest_ev.workspace_fingerprint = fingerprint
+                    pytest_ev.workspace_file_count = file_count
+                    evidence_list.append(pytest_ev)
+
+            # Only successful git actions can produce affirmative commit/push
+            # evidence. A failed command still has ProcessEvidence and a FAILED
+            # execution_status, but it must never satisfy a DoD requirement.
+            if command == "git" and result.returncode == 0:
+                if "push" in args:
+                    branch = "main"
+                    positional = [a for a in args if not a.startswith("-") and a not in {"push", "origin"}]
+                    if positional:
+                        branch = positional[-1]
                     remote_ev = capture_remote_git_evidence(os.getcwd(), branch)
                     if remote_ev:
-                         evidence_list.append(remote_ev)
-            except Exception:
-                pass
-            
+                        evidence_list.append(remote_ev)
+                elif "commit" in args:
+                    git_ev = capture_git_state(os.getcwd())
+                    if git_ev:
+                        evidence_list.append(git_ev)
+
             status = ExecutionStatus.SUCCEEDED if result.returncode == 0 else ExecutionStatus.FAILED
-            
             receipt = Receipt(
                 receipt_id=str(uuid.uuid4()),
                 session_id=active_session,
@@ -105,15 +104,15 @@ class WitnessBroker:
                 policy_decision=decision,
                 policy_reason=policy_result.reason,
                 execution_status=status,
-                environmental_evidence=evidence_list
+                environmental_evidence=evidence_list,
             )
             self.ledger.append(receipt)
             return receipt
-            
-        except Exception as e:
+        except Exception as exc:
             timestamp_end = datetime.now(timezone.utc).isoformat()
             from agentwitness.models import ExecutionFailureEvidence
-            evidence_list.append(ExecutionFailureEvidence(error_message=str(e)))
+
+            evidence_list.append(ExecutionFailureEvidence(error_message=str(exc)))
             receipt = Receipt(
                 receipt_id=str(uuid.uuid4()),
                 session_id=active_session,
@@ -125,7 +124,7 @@ class WitnessBroker:
                 policy_decision=decision,
                 policy_reason="Attempt permitted but execution failed",
                 execution_status=ExecutionStatus.ERROR,
-                environmental_evidence=evidence_list
+                environmental_evidence=evidence_list,
             )
             self.ledger.append(receipt)
             return receipt

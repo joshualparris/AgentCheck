@@ -1,7 +1,8 @@
 import json
 from enum import Enum
-from typing import Optional, List, Dict, Any, Union, Literal
+from typing import Optional, List, Union, Literal
 from pydantic import BaseModel, Field
+
 
 class Verdict(str, Enum):
     VERIFIED = "✅ VERIFIED"
@@ -12,10 +13,12 @@ class Verdict(str, Enum):
     POLICY_VIOLATION = "🔴 POLICY VIOLATION"
     ERROR = "❌ ERROR"
 
+
 class PolicyDecision(str, Enum):
     ALLOW = "ALLOW"
     DENY = "DENY"
     REQUIRE_APPROVAL = "REQUIRE_APPROVAL"
+
 
 class ExecutionStatus(str, Enum):
     NOT_ATTEMPTED = "NOT_ATTEMPTED"
@@ -24,14 +27,17 @@ class ExecutionStatus(str, Enum):
     ERROR = "ERROR"
     UNKNOWN_LEGACY = "UNKNOWN_LEGACY"
 
+
 class EvidenceBase(BaseModel):
     type: str
+
 
 class ProcessEvidence(EvidenceBase):
     type: str = "process"
     exit_code: int
     stdout_hash: str
     stderr_hash: str
+
 
 class PytestEvidence(EvidenceBase):
     type: str = "pytest"
@@ -40,6 +46,11 @@ class PytestEvidence(EvidenceBase):
     failed: int
     skipped: int
     exit_code: int
+    # v0.2.1+: content fingerprint of the relevant workspace immediately
+    # after the test command. Older receipts legitimately omit these fields.
+    workspace_fingerprint: Optional[str] = None
+    workspace_file_count: int = 0
+
 
 class GitEvidence(EvidenceBase):
     type: str = "git_state"
@@ -48,20 +59,28 @@ class GitEvidence(EvidenceBase):
     dirty: bool
     modified: List[str]
 
+
 class RemoteGitEvidence(EvidenceBase):
     type: str = "remote_git"
     local_head: str
     remote_head: str
     remote_verified: bool
+    remote: str = "origin"
+    branch: str = "main"
+    repository: Optional[str] = None
+    fetch_succeeded: bool = False
+
 
 class ExecutionFailureEvidence(EvidenceBase):
     type: str = "execution_failure"
     error_message: str
 
+
 class ContractCreationEvidence(EvidenceBase):
     type: Literal["contract_creation"] = "contract_creation"
     task_id: str
     contract_hash: str
+
 
 class RemoteCIEvidence(EvidenceBase):
     type: Literal["remote_ci"] = "remote_ci"
@@ -70,7 +89,27 @@ class RemoteCIEvidence(EvidenceBase):
     ci_status: str
     ci_conclusion: str
 
-EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, ExecutionFailureEvidence, ContractCreationEvidence, RemoteCIEvidence, EvidenceBase]
+
+class SecretScanEvidence(EvidenceBase):
+    type: Literal["secret_scan"] = "secret_scan"
+    commit_sha: Optional[str] = None
+    hit_count: int
+    files: List[str] = Field(default_factory=list)
+    patterns: List[str] = Field(default_factory=list)
+
+
+EvidenceAdapter = Union[
+    ProcessEvidence,
+    PytestEvidence,
+    GitEvidence,
+    RemoteGitEvidence,
+    ExecutionFailureEvidence,
+    ContractCreationEvidence,
+    RemoteCIEvidence,
+    SecretScanEvidence,
+    EvidenceBase,
+]
+
 
 class Receipt(BaseModel):
     schema_version: int = 2
@@ -95,10 +134,10 @@ class Receipt(BaseModel):
         if self.schema_version == 1:
             exclude_fields.add("schema_version")
             exclude_fields.add("execution_status")
-        # Excludes receipt_hash and signature for hashing
         data = self.model_dump(exclude=exclude_fields)
         return json.dumps(data, sort_keys=True)
-        
+
+
 class Claim(BaseModel):
     text: str
     claim_type: str

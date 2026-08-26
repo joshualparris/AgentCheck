@@ -2,25 +2,29 @@
 
 > AI agents don't get to grade their own homework.
 
-AgentWitness is an independent verification layer designed specifically to hold autonomous AI coding agents accountable. The problem we solve is simple: agents routinely claim they have completed tasks, run tests, or pushed code when the environment contradicts those claims. 
+AgentWitness is an independent verification layer for autonomous AI coding agents. Instead of trusting what an agent *says* happened, AgentWitness records environmental evidence, applies deterministic verification rules, and lets Definition-of-Done contracts decide whether a task is actually complete.
 
-Instead of relying on what the agent *says* happened, AgentWitness provides **independently captured environmental evidence with an explicit strength of proof.**
+**AgentWitness only witnesses actions routed through AgentWitness, plus explicit live verification observations. It does not silently monitor the entire machine.**
 
-**AgentWitness only witnesses actions routed through AgentWitness.** It does not silently monitor the entire machine.
+## Core philosophy
 
-## Core Philosophy
+**No evidence → no credit.**
 
-No evidence → no credit. 
-
-AgentWitness separates the extraction of an agent's claims from the verification of those claims. The LLM is never in the trust root. Every action passing through AgentWitness produces a tamper-evident cryptographic receipt, and every final claim is deterministically audited against this objective ledger.
+- Agent prose is never authoritative about what happened.
+- `UNVERIFIED` is not success.
+- A green historical result is not proof of the current workspace.
+- The environment, remote systems, signed receipts, and task contract determine objective status.
 
 ## Features
 
-- **Witness Broker**: A proxy wrapper (`aw run -- <command>`) that intercepts wrapped commands with `shell=False`.
-- **Policy Gate**: Enforces granular ALLOW, DENY, and REQUIRE_APPROVAL policies. Blocked attempts become part of the tamper-evident ledger.
-- **Evidence Adapters**: Domain-specific parsers (like `PytestEvidence` and `RemoteGitEvidence`) extract state facts rather than just recording raw stdout logs.
-- **Cryptographic Ledger**: A hash-chained JSONL ledger where every receipt is signed with an Ed25519 signature.
-- **ClaimGuard**: A deterministic auditor that maps extracted AI claims (e.g., "tests passed") against cryptographic receipts.
+- **Witness Broker** — `aw run` executes wrapped commands with `shell=False` and records signed receipts.
+- **Policy Gate** — ALLOW, DENY, and REQUIRE_APPROVAL decisions are recorded before execution.
+- **Evidence adapters** — pytest, git, remote git, GitHub CI, current worktree, and secret-diff observations.
+- **Cryptographic Ledger** — Ed25519-signed, hash-chained JSONL receipts with v1→v2 compatibility.
+- **ClaimGuard** — deterministic claim auditing against witnessed evidence.
+- **Definition-of-Done contracts** — tasks become `DONE` only when every required condition is satisfied.
+- **Freshness checking** — witnessed pytest results carry a workspace fingerprint; relevant later edits make the green result stale.
+- **Final-answer gate** — `aw final` can be used as a generic stop gate for Antigravity/Claude/Codex-style workflows.
 
 ## Installation
 
@@ -30,66 +34,120 @@ cd AgentCheck
 pip install -e .
 ```
 
-## Basic Commands
+## Basic commands
 
-To route a command through the Witness Broker:
+Route commands through the broker under one task/session:
+
 ```bash
-aw run -- pytest
-aw run -- git push origin main
+aw run --session-id my-task -- pytest
+aw run --session-id my-task -- git commit -m "fix"
+aw run --session-id my-task -- git push origin main
 ```
 
-To audit an agent's claim:
+Audit an agent claim:
+
 ```bash
-aw audit "I implemented the change and all 176 tests pass."
+aw audit --session-id my-task "I ran all the tests and they passed."
 ```
 
-To view the receipt ledger:
+View receipts:
+
 ```bash
 aw log
 ```
 
-## Security Considerations
+## Definition-of-Done contracts
 
-AgentWitness currently focuses on tamper-evident observation of wrapped processes, not sandbox isolation. 
-- The hash chain detects partial modification but is not currently anchored to an external transparency log, so it is tamper-evident but not tamper-proof against full file replacement.
-- To prevent credential leaking, standard outputs are securely hashed; however, be mindful that evidence adapters may capture sensitive environmental state.
-- **Do not commit `.agentwitness/` which contains generated private signing keys and receipts.**
+Example `contract.yaml`:
 
-## Limitations
-
-- **Scope**: AgentWitness only sees commands specifically invoked via `aw run`.
-- **Semantic Correctness**: It can verify that files changed and tests passed, but it cannot intrinsically prove that the code actually fulfills a complex human requirement (hence `PARTIALLY VERIFIED`).
-
-## Roadmap
-
-Future work includes:
-- Stronger OS/process isolation
-- OpenTelemetry integration
-- External transparency-log anchoring
-- Optional untrusted LLM-based claim extraction
-- Cross-agent reliability history
-- Definition-of-Done contracts
-
-## Definition-of-Done Contracts (v0.2)
-AgentWitness v0.2 introduces Task Contracts to independently define and verify the "DONE" state of a task based on objective environmental evidence. Agent prose (e.g. "I finished the task") never controls task status.
-
-Create a contract in YAML:
-`yaml
-task_id: agentwitness-example
-title: Example coding task
+```yaml
+task_id: my-task
+session_id: my-task
+title: Fix the verifier
 requirements:
   - type: tests_pass
   - type: local_commit_exists
   - type: remote_sha_match
+    parameters:
+      repository: joshualparris/AgentCheck
+      remote: origin
+      branch: main
+      commit_sha: abc123
   - type: remote_ci_pass
+    parameters:
+      repository: joshualparris/AgentCheck
+      commit_sha: abc123
   - type: clean_worktree
   - type: no_policy_violations
-`
+  - type: no_secrets_in_diff
+    parameters:
+      commit_sha: abc123
+```
 
-Create and verify it via the CLI:
-`powershell
+Create and evaluate it:
+
+```bash
 aw task create contract.yaml
-aw task status agentwitness-example
-`
+aw task status my-task
+aw task verify my-task
+```
 
-AgentWitness will evaluate every requirement directly from the cryptographic ledger and the remote environment (e.g., GitHub CI). The task is only DONE when all requirements are fully satisfied.
+CLI-created contracts opt into live git/worktree checks and fresh test evidence by default. v2 contracts are anchored into the signed ledger at creation so editing the task JSON and merely recomputing its adjacent hash cannot silently change the goalposts.
+
+## Antigravity / coding-agent final gate
+
+Before the agent sends its completion report:
+
+```bash
+aw final --session-id my-task --task-id my-task "Implemented the fix, tests pass, and I pushed it."
+```
+
+A zero exit code requires the extracted final claims to be fully verified and the supplied task contract to be `DONE`. Otherwise AgentWitness exits non-zero and prints `NOT VERIFIED — do not claim DONE`.
+
+This is the generic integration point until a stable native Antigravity lifecycle hook is available.
+
+## Fresh test evidence
+
+Starting with v0.2.1, pytest receipts can contain a SHA-256 fingerprint of relevant code, test, build, config, and lock files immediately after the run. At verification time AgentWitness recomputes the fingerprint. If the workspace changed after the green test run, `tests_pass` becomes `UNVERIFIED` rather than reusing stale evidence.
+
+Documentation-only edits intentionally do not invalidate the test fingerprint.
+
+## Secret-diff verification
+
+The `no_secrets_in_diff` requirement scans added git-diff lines for a small auditable set of common credential formats. It records only metadata such as file, line and pattern name. **Matched secret values are never placed in the explanation or signed ledger.**
+
+This is a defence-in-depth check, not a replacement for a dedicated secret scanner.
+
+## Security considerations
+
+AgentWitness currently focuses on tamper-evident observation and deterministic verification, not full sandbox isolation.
+
+- The ledger is hash-chained and signed but not yet externally anchored, so a hostile actor controlling the host and signing key remains outside the current trust model.
+- AgentWitness sees brokered commands and explicit live observations; native agent edit tools can still bypass action recording.
+- Workspace freshness checks help detect unwitnessed edits after a test run, but they do not identify who made the edit.
+- Standard process outputs are hashed. Evidence adapters should avoid storing sensitive values.
+- Do not commit `.agentwitness/`; it contains generated signing keys and receipts.
+
+## Limitations
+
+- **Semantic correctness** — evidence can prove that an action happened or a state matches a requirement; it does not prove arbitrary code fulfils human intent.
+- **Coverage** — a passing test suite can still be weak or incomplete. Scope-narrowed/zero-test warnings are planned next.
+- **Bypass resistance** — an agent with unrestricted direct filesystem/shell access can perform unwitnessed work. Stronger isolation is future work.
+
+## Prior art
+
+AgentWitness is intentionally learning from the open-source agent-verification ecosystem, especially Orthogon AI Labs' `agent-verify`, Vector Institute's `backcheck`, and `blasrodri/truth`. See [`docs/PRIOR_ART.md`](docs/PRIOR_ART.md) for licenses, adopted ideas, and the remaining integration roadmap.
+
+## Roadmap
+
+Next priorities:
+
+- protected-section verification
+- weak/subset/zero-test detection
+- native Antigravity/Claude/Codex adapters
+- transcript-import provenance
+- MCP server
+- stronger OS/process isolation
+- external transparency-log anchoring
+- OpenTelemetry integration
+- cross-agent reliability history

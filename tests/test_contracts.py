@@ -1,210 +1,130 @@
-import os
 import json
-import pytest
 from datetime import datetime, timezone
-from pathlib import Path
 
-from agentwitness.contracts.models import (
-    TaskContract, Requirement, RequirementType, TaskStatus, RequirementStatus
-)
-from agentwitness.contracts.storage import ContractStorage
-from agentwitness.contracts.evaluator import ContractEvaluator
-from agentwitness.ledger import Ledger
-from agentwitness.models import (
-    Receipt, PolicyDecision, ExecutionStatus, PytestEvidence, GitEvidence, 
-    RemoteGitEvidence, ExecutionFailureEvidence, ContractCreationEvidence, RemoteCIEvidence
-)
-from agentwitness.crypto import CryptoSigner
-from agentwitness.cli import app
+import pytest
 from typer.testing import CliRunner
+
+import agentwitness.contracts.evaluator as evaluator_module
+from agentwitness.cli import app
+from agentwitness.contracts.evaluator import ContractEvaluator
+from agentwitness.contracts.models import Requirement, RequirementStatus, RequirementType, TaskContract, TaskStatus
+from agentwitness.contracts.storage import ContractStorage
+from agentwitness.crypto import CryptoSigner
+from agentwitness.ledger import Ledger
+from agentwitness.models import ContractCreationEvidence, ExecutionStatus, GitEvidence, PolicyDecision, PytestEvidence, Receipt, RemoteGitEvidence
 
 runner = CliRunner()
 
-@pytest.fixture
-def temp_contracts_dir(tmp_path):
-    return tmp_path / "tasks"
-
-@pytest.fixture
-def storage(temp_contracts_dir):
-    return ContractStorage(temp_contracts_dir)
 
 @pytest.fixture
 def temp_ledger(tmp_path):
-    ledger_path = tmp_path / "ledger" / "receipts.jsonl"
-    signer = CryptoSigner(tmp_path / "keys")
-    return Ledger(filepath=ledger_path, signer=signer)
+    return Ledger(filepath=tmp_path / "ledger" / "receipts.jsonl", signer=CryptoSigner(tmp_path / "keys"))
+
+
+@pytest.fixture
+def storage(tmp_path, temp_ledger):
+    return ContractStorage(tmp_path / "tasks", ledger=temp_ledger)
+
+
+def make_contract(task_id, session_id, requirements, version=2):
+    return TaskContract(contract_version=version, task_id=task_id, session_id=session_id, title=task_id, requirements=requirements, created_at=datetime.now(timezone.utc).isoformat())
+
+
+def anchor(ledger, contract):
+    ledger.append(Receipt(receipt_id=f"anchor-{contract.task_id}", session_id=contract.session_id, timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="agentwitness:contract", argv=["create", contract.task_id], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[ContractCreationEvidence(task_id=contract.task_id, contract_hash=contract.canonical_hash())]))
+
 
 def test_cli_aw_run_exists():
     result = runner.invoke(app, ["run", "--help"])
     assert result.exit_code == 0
     assert "Run a command through the Witness Broker" in result.output
 
-def test_contract_storage_tamper_delete_hash(storage, temp_ledger):
-    req = Requirement(requirement_id="req1", type=RequirementType.TESTS_PASS)
-    contract = TaskContract(
-        task_id="task_1",
-        session_id="sess_1",
-        title="Test Task",
-        requirements=[req],
-        created_at=datetime.now(timezone.utc).isoformat()
-    )
-    
-    storage.save(contract)
-    path = storage._get_path("task_1")
-    
-    with open(path, "r") as f:
-        data = json.load(f)
-    
-    del data["_stored_hash"]
-    with open(path, "w") as f:
-        json.dump(data, f)
-        
-    with pytest.raises(ValueError, match="missing its _stored_hash"):
-        storage.load("task_1")
 
-def test_contract_storage_tamper_recalculate_hash(storage, temp_ledger):
-    req = Requirement(requirement_id="req1", type=RequirementType.TESTS_PASS)
-    contract = TaskContract(
-        task_id="task_2",
-        session_id="sess_1",
-        title="Test Task",
-        requirements=[req],
-        created_at=datetime.now(timezone.utc).isoformat()
-    )
-    
+def test_contract_storage_detects_missing_hash(storage):
+    contract = make_contract("task-1", "s1", [Requirement(type=RequirementType.TESTS_PASS)])
     storage.save(contract)
-    path = storage._get_path("task_2")
-    
-    with open(path, "r") as f:
-        data = json.load(f)
-    
-    data["requirements"].pop()
-    spoofed = TaskContract.model_validate(data)
+    path = storage._get_path(contract.task_id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("_stored_hash")
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="missing its stored hash"):
+        storage.load(contract.task_id)
+
+
+def test_contract_storage_detects_rehashed_goalpost_change(storage):
+    contract = make_contract("task-2", "s2", [Requirement(type=RequirementType.TESTS_PASS)])
+    storage.save(contract)
+    path = storage._get_path(contract.task_id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["requirements"] = []
+    spoofed = TaskContract.model_validate({k: v for k, v in data.items() if k != "_stored_hash"})
     data["_stored_hash"] = spoofed.canonical_hash()
-    
-    with open(path, "w") as f:
-        json.dump(data, f)
-        
-    loaded = storage.load("task_2")
-    
-    # Simulate writing creation evidence to ledger for the original contract
-    creation_ev = ContractCreationEvidence(task_id="task_2", contract_hash=contract.canonical_hash())
-    r = Receipt(
-        receipt_id="r0", session_id="sess_1", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="aw", argv=[], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[creation_ev]
-    )
-    temp_ledger.append(r)
-    
-    evaluator = ContractEvaluator(temp_ledger)
-    res = evaluator.evaluate(loaded)
-    assert res.status == TaskStatus.BLOCKED
-    assert "does not match ledger" in res.results[0].explanation
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ValueError, match="signed creation anchor"):
+        storage.load(contract.task_id)
 
-def test_local_commit_existence(temp_ledger):
-    evaluator = ContractEvaluator(temp_ledger)
-    req = Requirement(requirement_id="req1", type=RequirementType.LOCAL_COMMIT_EXISTS)
-    contract = TaskContract(
-        task_id="t1", session_id="s1", title="T1",
-        requirements=[req], created_at="2026-08-26T00:00:00Z"
-    )
-    creation_ev = ContractCreationEvidence(task_id="t1", contract_hash=contract.canonical_hash())
-    r0 = Receipt(
-        receipt_id="r0", session_id="s1", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="aw", argv=[], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[creation_ev]
-    )
-    temp_ledger.append(r0)
-    
-    r1 = Receipt(
-        receipt_id="r1", session_id="s1", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="git", argv=["status"], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.SUCCEEDED,
-        environmental_evidence=[GitEvidence(head="123", branch="main", dirty=False, modified=[])]
-    )
-    temp_ledger.append(r1)
-    res = evaluator.evaluate(contract)
-    assert res.results[0].status == RequirementStatus.UNVERIFIED
-    
-    r2 = Receipt(
-        receipt_id="r2", session_id="s1", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="git", argv=["commit", "-m", "msg"], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.FAILED,
-        environmental_evidence=[]
-    )
-    temp_ledger.append(r2)
-    res = evaluator.evaluate(contract)
-    assert res.results[0].status == RequirementStatus.UNSATISFIED
-    
-    r3 = Receipt(
-        receipt_id="r3", session_id="s1", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="git", argv=["commit", "-m", "msg"], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.SUCCEEDED,
-        environmental_evidence=[]
-    )
-    temp_ledger.append(r3)
-    res = evaluator.evaluate(contract)
-    assert res.results[0].status == RequirementStatus.SATISFIED
 
-def test_full_contract_done(temp_ledger):
-    evaluator = ContractEvaluator(temp_ledger)
-    reqs = [
-        Requirement(requirement_id="1", type=RequirementType.TESTS_PASS),
-        Requirement(requirement_id="2", type=RequirementType.LOCAL_COMMIT_EXISTS),
-    ]
-    contract = TaskContract(
-        task_id="t2", session_id="s2", title="T2", requirements=reqs, created_at="2026-08-26T00:00:00Z"
-    )
-    
-    creation_ev = ContractCreationEvidence(task_id="t2", contract_hash=contract.canonical_hash())
-    r0 = Receipt(
-        receipt_id="r0", session_id="s2", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="aw", argv=[], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[creation_ev]
-    )
-    temp_ledger.append(r0)
-    
-    r1 = Receipt(
-        receipt_id="r1", session_id="s2", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.SUCCEEDED,
-        environmental_evidence=[PytestEvidence(collected=1, passed=1, failed=0, skipped=0, exit_code=0)]
-    )
-    temp_ledger.append(r1)
-    
-    r2 = Receipt(
-        receipt_id="r2", session_id="s2", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="git", argv=["commit"], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[]
-    )
-    temp_ledger.append(r2)
-    
-    res = evaluator.evaluate(contract)
-    assert res.status == TaskStatus.DONE
-    assert all(r.status == RequirementStatus.SATISFIED for r in res.results)
+def test_evaluator_itself_rejects_tampered_v2_contract(temp_ledger):
+    original = make_contract("task-3", "s3", [Requirement(type=RequirementType.TESTS_PASS)])
+    anchor(temp_ledger, original)
+    altered = original.model_copy(update={"requirements": []})
+    result = ContractEvaluator(temp_ledger).evaluate(altered)
+    assert result.status == TaskStatus.BLOCKED
+    assert "signed creation anchor" in result.results[0].explanation
 
-def test_test_failure_failed(temp_ledger):
-    evaluator = ContractEvaluator(temp_ledger)
-    reqs = [Requirement(requirement_id="1", type=RequirementType.TESTS_PASS)]
-    contract = TaskContract(
-        task_id="t3", session_id="s3", title="T3", requirements=reqs, created_at="2026-08-26T00:00:00Z"
-    )
-    
-    creation_ev = ContractCreationEvidence(task_id="t3", contract_hash=contract.canonical_hash())
-    temp_ledger.append(Receipt(
-        receipt_id="r0", session_id="s3", timestamp_start="t", timestamp_end="t", cwd="/", 
-        resolved_executable="aw", argv=[], policy_decision=PolicyDecision.ALLOW, 
-        execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[creation_ev]
-    ))
-    
-    temp_ledger.append(Receipt(
-        receipt_id="r1", session_id="s3", timestamp_start="t", timestamp_end="t",
-        cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW,
-        execution_status=ExecutionStatus.FAILED,
-        environmental_evidence=[PytestEvidence(collected=1, passed=0, failed=1, skipped=0, exit_code=1)]
-    ))
-    
-    res = evaluator.evaluate(contract)
-    assert res.status == TaskStatus.FAILED
-    assert res.results[0].status == RequirementStatus.UNSATISFIED
 
+def test_local_commit_requires_success_and_git_state(temp_ledger, monkeypatch):
+    req = Requirement(type=RequirementType.LOCAL_COMMIT_EXISTS)
+    contract = make_contract("task-4", "s4", [req])
+    anchor(temp_ledger, contract)
+    evaluator = ContractEvaluator(temp_ledger)
+
+    temp_ledger.append(Receipt(receipt_id="failed", session_id="s4", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="git", argv=["commit", "-m", "x"], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.FAILED))
+    failed = evaluator.evaluate(contract)
+    assert failed.results[0].status == RequirementStatus.UNVERIFIED
+
+    temp_ledger.append(Receipt(receipt_id="success-no-state", session_id="s4", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="git", argv=["commit", "-m", "x"], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED))
+    missing = evaluator.evaluate(contract)
+    assert missing.results[0].status == RequirementStatus.UNVERIFIED
+
+    monkeypatch.setattr(evaluator_module, "git_commit_exists", lambda cwd, sha: True)
+    temp_ledger.append(Receipt(receipt_id="success-with-state", session_id="s4", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="git", argv=["commit", "-m", "x"], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[GitEvidence(head="abc123", branch="main", dirty=False, modified=[])]))
+    success = evaluator.evaluate(contract)
+    assert success.results[0].status == RequirementStatus.SATISFIED
+
+
+def test_latest_test_failure_fails_task(temp_ledger):
+    req = Requirement(type=RequirementType.TESTS_PASS)
+    contract = make_contract("task-5", "s5", [req])
+    anchor(temp_ledger, contract)
+    temp_ledger.append(Receipt(receipt_id="tests", session_id="s5", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.FAILED, environmental_evidence=[PytestEvidence(collected=2, passed=1, failed=1, skipped=0, exit_code=1)]))
+    result = ContractEvaluator(temp_ledger).evaluate(contract)
+    assert result.status == TaskStatus.FAILED
+    assert result.results[0].status == RequirementStatus.UNSATISFIED
+
+
+def test_wrong_session_evidence_does_not_satisfy(temp_ledger):
+    req = Requirement(type=RequirementType.TESTS_PASS)
+    contract = make_contract("task-6", "right", [req])
+    anchor(temp_ledger, contract)
+    temp_ledger.append(Receipt(receipt_id="wrong-tests", session_id="wrong", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="pytest", argv=[], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[PytestEvidence(collected=1, passed=1, failed=0, skipped=0, exit_code=0)]))
+    result = ContractEvaluator(temp_ledger).evaluate(contract)
+    assert result.results[0].status == RequirementStatus.UNVERIFIED
+
+
+def test_policy_violation_prevents_done(temp_ledger):
+    req = Requirement(type=RequirementType.NO_POLICY_VIOLATIONS)
+    contract = make_contract("task-7", "s7", [req])
+    anchor(temp_ledger, contract)
+    temp_ledger.append(Receipt(receipt_id="deny", session_id="s7", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="git", argv=["push", "--force"], policy_decision=PolicyDecision.DENY, execution_status=ExecutionStatus.NOT_ATTEMPTED))
+    result = ContractEvaluator(temp_ledger).evaluate(contract)
+    assert result.status == TaskStatus.FAILED
+    assert result.results[0].status == RequirementStatus.UNSATISFIED
+
+
+def test_legacy_remote_sha_evidence_can_still_be_read(temp_ledger):
+    req = Requirement(type=RequirementType.REMOTE_SHA_MATCH, parameters={"commit_sha": "abc"})
+    contract = make_contract("legacy", "s8", [req], version=1)
+    temp_ledger.append(Receipt(receipt_id="push", session_id="s8", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="git", argv=["push"], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[RemoteGitEvidence(local_head="abc", remote_head="abc", remote_verified=True)]))
+    result = ContractEvaluator(temp_ledger).evaluate(contract)
+    assert result.status == TaskStatus.DONE

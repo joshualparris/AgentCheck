@@ -45,7 +45,10 @@ class Ledger:
                     last_line = line
         
         if last_line:
-            return Receipt.model_validate_json(last_line)
+            data = json.loads(last_line)
+            if "schema_version" not in data:
+                data["schema_version"] = 1
+            return Receipt.model_validate(data)
         return None
 
     def read_all(self) -> List[Receipt]:
@@ -56,7 +59,10 @@ class Ledger:
         with open(self.filepath, "r", encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    receipts.append(Receipt.model_validate_json(line))
+                    data = json.loads(line)
+                    if "schema_version" not in data:
+                        data["schema_version"] = 1
+                    receipts.append(Receipt.model_validate(data))
         return receipts
 
     def verify_chain(self) -> bool:

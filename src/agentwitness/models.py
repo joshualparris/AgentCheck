@@ -61,7 +61,7 @@ class ExecutionFailureEvidence(EvidenceBase):
 EvidenceAdapter = Union[ProcessEvidence, PytestEvidence, GitEvidence, RemoteGitEvidence, ExecutionFailureEvidence, EvidenceBase]
 
 class Receipt(BaseModel):
-    schema_version: int = 1
+    schema_version: int = 2
     receipt_id: str
     session_id: str
     parent_action_id: Optional[str] = None

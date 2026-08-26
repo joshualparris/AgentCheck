@@ -16,11 +16,19 @@ from agentwitness.contracts.models import (
     TaskEvaluation,
 )
 from agentwitness.ledger import Ledger
-from agentwitness.models import ExecutionStatus, PolicyDecision, Receipt, SecretScanEvidence
+from agentwitness.models import (
+    ExecutionStatus,
+    PolicyDecision,
+    Receipt,
+    SecretScanEvidence,
+    ProtectedSectionsEvidence,
+)
 from agentwitness.evidence.git import capture_git_state, capture_remote_git_evidence, git_commit_exists
 from agentwitness.evidence.github import observe_remote_ci
 from agentwitness.evidence.secrets import scan_git_diff_for_secrets
 from agentwitness.evidence.workspace import workspace_fingerprint
+from agentwitness.evidence.test_scope import classify_pytest_scope
+from agentwitness.evidence.protected import check_protected_sections
 
 
 class ContractEvaluator:
@@ -47,8 +55,6 @@ class ContractEvaluator:
                 if self._ev_value(ev, "task_id") == contract.task_id:
                     anchors.append(self._ev_value(ev, "contract_hash", ""))
 
-        # v1 contracts pre-date mandatory ledger anchoring. If an anchor exists
-        # it is enforced; new v2+ contracts are blocked without one.
         if contract.contract_version >= 2 and not anchors:
             return "Tampering/untrusted contract: no signed ContractCreationEvidence exists for this v2 contract."
         if not anchors:
@@ -115,6 +121,7 @@ class ContractEvaluator:
             RequirementType.NO_POLICY_VIOLATIONS: self._eval_no_policy_violations,
             RequirementType.REMOTE_CI_PASS: self._eval_remote_ci,
             RequirementType.NO_SECRETS_IN_DIFF: self._eval_no_secrets,
+            RequirementType.PROTECTED_SECTIONS_INTACT: self._eval_protected_sections,
         }
         handler = dispatch.get(req.type)
         if not handler:
@@ -126,14 +133,35 @@ class ContractEvaluator:
             for ev in receipt.environmental_evidence:
                 if self._ev_type(ev) != "pytest":
                     continue
+
                 exit_code = self._ev_value(ev, "exit_code")
                 failed = self._ev_value(ev, "failed")
+                collected = self._ev_value(ev, "collected", 0)
                 if receipt.execution_status != ExecutionStatus.SUCCEEDED or exit_code != 0 or failed != 0:
                     return RequirementResult(
                         requirement=req,
                         status=RequirementStatus.UNSATISFIED,
                         evidence_receipt_ids=[receipt.receipt_id],
                         explanation="The latest witnessed pytest execution failed.",
+                    )
+
+                minimum_collected = int(req.parameters.get("minimum_collected", 1))
+                if collected < minimum_collected:
+                    return RequirementResult(
+                        requirement=req,
+                        status=RequirementStatus.UNVERIFIED,
+                        evidence_receipt_ids=[receipt.receipt_id],
+                        explanation=f"Pytest exited successfully but collected only {collected} test(s); at least {minimum_collected} are required.",
+                    )
+
+                allow_subset = bool(req.parameters.get("allow_subset", False))
+                narrowed, reasons = classify_pytest_scope(receipt.argv)
+                if narrowed and not allow_subset:
+                    return RequirementResult(
+                        requirement=req,
+                        status=RequirementStatus.UNVERIFIED,
+                        evidence_receipt_ids=[receipt.receipt_id],
+                        explanation="Tests passed, but the invocation was scope-narrowed (" + ", ".join(reasons) + "); this cannot prove a broad suite-passed requirement.",
                     )
 
                 recorded_fp = self._ev_value(ev, "workspace_fingerprint")
@@ -159,7 +187,7 @@ class ContractEvaluator:
                     requirement=req,
                     status=RequirementStatus.SATISFIED,
                     evidence_receipt_ids=[receipt.receipt_id],
-                    explanation="Tests executed and passed; freshness requirements are satisfied.",
+                    explanation="Tests executed and passed; scope and freshness requirements are satisfied.",
                 )
         return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="No pytest execution evidence found in this task session.")
 
@@ -271,3 +299,24 @@ class ContractEvaluator:
             more = f"; +{len(hits) - 5} more" if len(hits) > 5 else ""
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Possible credential pattern(s) detected: {shown}{more}. Secret values were not recorded.")
         return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt_id], explanation="No configured credential patterns were found in the relevant diff.")
+
+    def _eval_protected_sections(self, req: Requirement, receipts: list) -> RequirementResult:
+        allowed = req.parameters.get("allowed") or []
+        skip_paths = req.parameters.get("skip_paths") or []
+        check = check_protected_sections(os.getcwd(), allowed=allowed, skip_paths=skip_paths)
+        evidence = ProtectedSectionsEvidence(
+            status=check.status,
+            checked_blocks=check.checked_blocks,
+            changed_blocks=[f"{c.path}::{c.name}" for c in check.changes],
+            errors=check.errors[:20],
+        )
+        receipt_id = self._record_observation(evidence, "git", ["protected-sections-check"])
+
+        if check.status == "inconclusive":
+            detail = "; ".join(check.errors[:3]) or "Protected-section state could not be determined."
+            return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=[receipt_id], explanation=detail)
+        if check.status == "fail":
+            changed = ", ".join(f"{c.path} (block: {c.name})" for c in check.changes[:5])
+            more = f"; +{len(check.changes) - 5} more" if len(check.changes) > 5 else ""
+            return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Protected sections were modified: {changed}{more}.")
+        return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Protected sections intact ({check.checked_blocks} committed block(s) checked).")

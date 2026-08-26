@@ -46,8 +46,6 @@ class PytestEvidence(EvidenceBase):
     failed: int
     skipped: int
     exit_code: int
-    # Introduced in receipt schema v3. Historical v2 receipts legitimately
-    # omit these fields and payload_for_hash reconstructs their original bytes.
     workspace_fingerprint: Optional[str] = None
     workspace_file_count: int = 0
 
@@ -65,7 +63,6 @@ class RemoteGitEvidence(EvidenceBase):
     local_head: str
     remote_head: str
     remote_verified: bool
-    # Introduced in receipt schema v3.
     remote: str = "origin"
     branch: str = "main"
     repository: Optional[str] = None
@@ -99,6 +96,14 @@ class SecretScanEvidence(EvidenceBase):
     patterns: List[str] = Field(default_factory=list)
 
 
+class ProtectedSectionsEvidence(EvidenceBase):
+    type: Literal["protected_sections"] = "protected_sections"
+    status: str
+    checked_blocks: int
+    changed_blocks: List[str] = Field(default_factory=list)
+    errors: List[str] = Field(default_factory=list)
+
+
 EvidenceAdapter = Union[
     ProcessEvidence,
     PytestEvidence,
@@ -108,14 +113,12 @@ EvidenceAdapter = Union[
     ContractCreationEvidence,
     RemoteCIEvidence,
     SecretScanEvidence,
+    ProtectedSectionsEvidence,
     EvidenceBase,
 ]
 
 
 class Receipt(BaseModel):
-    # v1: no schema_version/execution_status in canonical payload
-    # v2: execution_status + original evidence shapes
-    # v3: freshness and remote-identity evidence fields
     schema_version: int = 3
     receipt_id: str
     session_id: str
@@ -134,12 +137,6 @@ class Receipt(BaseModel):
     signature: str = ""
 
     def payload_for_hash(self) -> str:
-        """Reconstruct the exact canonical payload for the receipt's schema.
-
-        Pydantic correctly supplies defaults when historical JSON is loaded, but
-        defaults introduced by a newer model must never be allowed to alter the
-        bytes that an older receipt originally signed.
-        """
         exclude_fields = {"receipt_hash", "signature"}
         data = self.model_dump(exclude=exclude_fields)
 

@@ -14,6 +14,7 @@ class RequirementType(str, Enum):
     CLEAN_WORKTREE = "clean_worktree"
     NO_POLICY_VIOLATIONS = "no_policy_violations"
     NO_SECRETS_IN_DIFF = "no_secrets_in_diff"
+    PROTECTED_SECTIONS_INTACT = "protected_sections_intact"
 
 
 class RequirementStatus(str, Enum):
@@ -48,8 +49,6 @@ class RequirementResult(BaseModel):
 
 
 class TaskContract(BaseModel):
-    # v2 contracts are anchored into the signed ledger on creation. The storage
-    # reader still accepts v1 contracts as legacy, lower-assurance contracts.
     contract_version: int = 2
     task_id: str
     session_id: str

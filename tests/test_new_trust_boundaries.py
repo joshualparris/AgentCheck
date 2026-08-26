@@ -79,11 +79,17 @@ def test_provenance_observation_labels(tmp_path):
     
     # LIVE_OBSERVED
     evaluator._record_observation(ev, "git", ["status"], Provenance.LIVE_OBSERVED)
-    assert ledger.read_all()[0].provenance == Provenance.LIVE_OBSERVED
+    obs1 = ledger.read_all()[0]
+    assert obs1.provenance == Provenance.LIVE_OBSERVED
+    assert obs1.policy_evaluation == PolicyEvaluation.NOT_APPLICABLE
+    assert obs1.policy_decision is None
     
     # REMOTE_OBSERVED
     evaluator._record_observation(ev, "git", ["fetch"], Provenance.REMOTE_OBSERVED)
-    assert ledger.read_all()[1].provenance == Provenance.REMOTE_OBSERVED
+    obs2 = ledger.read_all()[1]
+    assert obs2.provenance == Provenance.REMOTE_OBSERVED
+    assert obs2.policy_evaluation == PolicyEvaluation.NOT_APPLICABLE
+    assert obs2.policy_decision is None
 
 def test_policy_compliance_semantics(tmp_path):
     from agentwitness.contracts.evaluator import ContractEvaluator
@@ -103,11 +109,11 @@ def test_policy_compliance_semantics(tmp_path):
     assert evaluator._eval_no_policy_violations(req, [r_allow, r_deny]).status == RequirementStatus.UNSATISFIED
     
     # 3. TRANSCRIPT (NOT_EVALUATED) -> UNVERIFIED
-    r_not_eval = Receipt(receipt_id="3", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="echo", argv=["a"], policy_decision=PolicyDecision.NOT_EVALUATED, execution_status=ExecutionStatus.SUCCEEDED, provenance=Provenance.TRANSCRIPT_IMPORTED)
+    r_not_eval = Receipt(receipt_id="3", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="echo", argv=["a"], policy_evaluation=PolicyEvaluation.NOT_EVALUATED, policy_decision=None, execution_status=ExecutionStatus.SUCCEEDED, provenance=Provenance.TRANSCRIPT_IMPORTED)
     assert evaluator._eval_no_policy_violations(req, [r_allow, r_not_eval]).status == RequirementStatus.UNVERIFIED
     
     # 4. BYPASSED -> UNVERIFIED
-    r_bypassed = Receipt(receipt_id="4", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="echo", argv=["a"], policy_decision=PolicyDecision.BYPASSED, execution_status=ExecutionStatus.SUCCEEDED, provenance=Provenance.BROKER_WITNESSED)
+    r_bypassed = Receipt(receipt_id="4", session_id="s", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="echo", argv=["a"], policy_evaluation=PolicyEvaluation.BYPASSED, policy_decision=None, execution_status=ExecutionStatus.SUCCEEDED, provenance=Provenance.BROKER_WITNESSED)
     assert evaluator._eval_no_policy_violations(req, [r_allow, r_bypassed]).status == RequirementStatus.UNVERIFIED
 
 import pytest

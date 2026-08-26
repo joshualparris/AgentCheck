@@ -28,6 +28,10 @@ def test_synchronous_success(tmp_path, temp_ledger):
     assert receipts[0].execution_status == ExecutionStatus.SUCCEEDED
     assert receipts[0].resolved_executable == "echo"
     assert receipts[0].argv == ["echo 1"]
+    from agentwitness.models import PolicyEvaluation, Provenance
+    assert receipts[0].policy_evaluation == PolicyEvaluation.NOT_EVALUATED
+    assert receipts[0].policy_decision is None
+    assert receipts[0].provenance == Provenance.TRANSCRIPT_IMPORTED
     assert receipts[0].provenance == Provenance.TRANSCRIPT_IMPORTED
     
 def test_nonzero_exit(tmp_path, temp_ledger):

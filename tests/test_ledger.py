@@ -92,3 +92,96 @@ def test_receipt_default_schema_version():
         execution_status=ExecutionStatus.SUCCEEDED
     )
     assert r.schema_version == 5
+def test_full_chain_migration(temp_ledger):
+    import json
+    from agentwitness.crypto import hash_payload, CryptoSigner
+    from agentwitness.models import Receipt
+    
+    signer = CryptoSigner(Path("tests/fixtures/v1"))
+    temp_ledger.signer = signer
+
+    # V1 fixture (already exists and signed)
+    with open(Path("tests/fixtures/v1/receipt.json"), "r", encoding="utf-8") as f:
+        v1_json_str = f.read().strip()
+    
+    prev_hash = json.loads(v1_json_str)["receipt_hash"]
+
+    # V2 payload (has schema_version, execution_status, but no provenance or policy_evaluation)
+    v2_payload = {
+        "schema_version": 2, "receipt_id": "v2", "session_id": "s", "parent_action_id": None,
+        "timestamp_start": "t", "timestamp_end": "t", "cwd": "/", "resolved_executable": "echo",
+        "argv": [], "policy_decision": "ALLOW", "policy_reason": None,
+        "execution_status": "SUCCEEDED", "environmental_evidence": [],
+        "previous_hash": prev_hash
+    }
+    canon = json.dumps(v2_payload, sort_keys=True)
+    v2_stored = dict(v2_payload)
+    v2_stored["receipt_hash"] = hash_payload(canon)
+    v2_stored["signature"] = signer.sign(canon)
+    prev_hash = v2_stored["receipt_hash"]
+    
+    # V3 payload (has provenance)
+    v3_payload = {
+        "schema_version": 3, "receipt_id": "v3", "session_id": "s", "parent_action_id": None,
+        "timestamp_start": "t", "timestamp_end": "t", "cwd": "/", "resolved_executable": "echo",
+        "argv": [], "policy_decision": "ALLOW", "policy_reason": None,
+        "execution_status": "SUCCEEDED", "environmental_evidence": [],
+        "previous_hash": prev_hash
+    }
+    canon = json.dumps(v3_payload, sort_keys=True)
+    v3_stored = dict(v3_payload)
+    v3_stored["receipt_hash"] = hash_payload(canon)
+    v3_stored["signature"] = signer.sign(canon)
+    prev_hash = v3_stored["receipt_hash"]
+    
+    # V4 payload (has legacy policy_decision strings NOT_EVALUATED)
+    v4_payload = {
+        "schema_version": 4, "receipt_id": "v4", "session_id": "s", "parent_action_id": None,
+        "timestamp_start": "t", "timestamp_end": "t", "cwd": "/", "resolved_executable": "echo",
+        "argv": [], "policy_decision": "NOT_EVALUATED", "policy_reason": None,
+        "execution_status": "SUCCEEDED", "provenance": "TRANSCRIPT_IMPORTED", "environmental_evidence": [],
+        "previous_hash": prev_hash
+    }
+    canon = json.dumps(v4_payload, sort_keys=True)
+    v4_stored = dict(v4_payload)
+    v4_stored["receipt_hash"] = hash_payload(canon)
+    v4_stored["signature"] = signer.sign(canon)
+    prev_hash = v4_stored["receipt_hash"]
+    
+    # V5 payload (current, policy_evaluation)
+    v5_payload = {
+        "schema_version": 5, "receipt_id": "v5", "session_id": "s", "parent_action_id": None,
+        "timestamp_start": "t", "timestamp_end": "t", "cwd": "/", "resolved_executable": "echo",
+        "argv": [], "policy_evaluation": "NOT_APPLICABLE", "policy_decision": None, "policy_reason": None,
+        "execution_status": "SUCCEEDED", "provenance": "LIVE_OBSERVED", "environmental_evidence": [],
+        "previous_hash": prev_hash
+    }
+    canon = json.dumps(v5_payload, sort_keys=True)
+    v5_stored = dict(v5_payload)
+    v5_stored["receipt_hash"] = hash_payload(canon)
+    v5_stored["signature"] = signer.sign(canon)
+    
+    # Write to ledger
+    with open(temp_ledger.filepath, "w", encoding="utf-8") as f:
+        f.write(v1_json_str + "\n")
+        f.write(json.dumps(v2_stored) + "\n")
+        f.write(json.dumps(v3_stored) + "\n")
+        f.write(json.dumps(v4_stored) + "\n")
+        f.write(json.dumps(v5_stored) + "\n")
+        
+    assert temp_ledger.verify_chain() is True
+    
+    # Check tampering
+    lines = temp_ledger.filepath.read_text(encoding="utf-8").splitlines()
+    for i in range(len(lines)):
+        modified = lines[:]
+        mod_dict = json.loads(modified[i])
+        if "argv" in mod_dict:
+            mod_dict["argv"] = ["tampered"]
+        else:
+            mod_dict["cwd"] = "/tampered"
+        modified[i] = json.dumps(mod_dict)
+        temp_ledger.filepath.write_text("\n".join(modified) + "\n", encoding="utf-8")
+        assert temp_ledger.verify_chain() is False
+        temp_ledger.filepath.write_text("\n".join(lines) + "\n", encoding="utf-8") # restore
+

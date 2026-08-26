@@ -170,7 +170,10 @@ class Receipt(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def migrate_legacy_policy(cls, data: dict) -> dict:
-        sv = data.get("schema_version", 1)
+        if "schema_version" not in data:
+            return data
+            
+        sv = data.get("schema_version")
         if sv <= 4:
             pd = data.get("policy_decision")
             if pd == "NOT_EVALUATED":
@@ -201,7 +204,6 @@ class Receipt(BaseModel):
             data.pop("execution_status", None)
             data.pop("provenance", None)
         elif self.schema_version == 2:
-            data.pop("execution_status", None)
             data.pop("provenance", None)
         elif self.schema_version == 3:
             data.pop("provenance", None)

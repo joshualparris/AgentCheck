@@ -191,7 +191,7 @@ class AntigravityAdapter:
             cwd=cmd_info["cwd"],
             resolved_executable=resolved_executable,
             argv=argv,
-            policy_evaluation=PolicyEvaluation.NOT_EVALUATED,
+            schema_version=5, policy_evaluation=PolicyEvaluation.NOT_EVALUATED,
             policy_decision=None,
             policy_reason="Imported from transcript; not evaluated by broker",
             execution_status=execution_status,

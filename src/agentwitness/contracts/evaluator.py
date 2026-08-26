@@ -115,7 +115,7 @@ class ContractEvaluator:
             cwd=cwd or os.getcwd(),
             resolved_executable=executable,
             argv=argv,
-            policy_evaluation=PolicyEvaluation.NOT_APPLICABLE,
+            schema_version=5, policy_evaluation=PolicyEvaluation.NOT_APPLICABLE,
             policy_decision=None,
             policy_reason="Independent verification observation.",
             execution_status=ExecutionStatus.SUCCEEDED,

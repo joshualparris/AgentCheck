@@ -476,18 +476,29 @@ def test_integration_stale_hardened_evidence(backend, key_env, tmp_path):
                 # The evaluator will reject it because evidence fingerprint != current fingerprint
 
 def test_agyrunner_cannot_write_agentwitness_dir():
-    import getpass
     import os
-    if getpass.getuser() == 'AGYRunner':
-        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        target = os.path.join(repo_root, '.agentwitness', 'test_probe.txt')
-        try:
-            os.makedirs(os.path.dirname(target), exist_ok=True)
-            with open(target, 'w') as f:
-                f.write('tamper')
-            pytest.fail('AGYRunner should not be able to write to .agentwitness')
-        except PermissionError:
-            pass
-        finally:
-            if os.path.exists(target):
-                os.remove(target)
+    import ctypes
+    from ctypes import wintypes
+    import pytest
+
+    def _windows_token_username():
+        size = wintypes.DWORD(256)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not ctypes.windll.advapi32.GetUserNameW(buf, ctypes.byref(size)):
+            raise ctypes.WinError()
+        return buf.value
+
+    actual_user = _windows_token_username()
+
+    if actual_user.lower() != "agyrunner":
+        pytest.skip("requires real AGYRunner Windows token")
+
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+    target = os.path.join(repo_root, '.agentwitness', 'test_probe.txt')
+
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with pytest.raises(PermissionError):
+        with open(target, "w") as f:
+            f.write("tamper")
+
+    assert not os.path.exists(target)

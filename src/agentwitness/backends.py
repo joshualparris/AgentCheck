@@ -39,8 +39,9 @@ class LocalBackend(VerificationBackend):
 
 
 class LLMAccountabilityBackend(VerificationBackend):
-    def __init__(self, service_url: str = "http://127.0.0.1:8123"):
+    def __init__(self, service_url: str = "http://127.0.0.1:8123", public_key_path: str = "C:/ProgramData/AGYVerifier/public.pem"):
         self.service_url = service_url
+        self.public_key_path = public_key_path
 
     @property
     def provenance(self) -> Provenance:
@@ -56,12 +57,7 @@ class LLMAccountabilityBackend(VerificationBackend):
             canonical_record_for_sig = dict(record)
             del canonical_record_for_sig["signature_ed25519"]
             
-            if os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("AGY_ALLOW_TEST_KEY_OVERRIDE") == "1":
-                pub_key_path = os.environ.get("AGY_PUBLIC_KEY_PATH", "C:/ProgramData/AGYVerifier/public.pem")
-            else:
-                pub_key_path = "C:/ProgramData/AGYVerifier/public.pem"
-            
-            with open(pub_key_path, "rb") as f:
+            with open(self.public_key_path, "rb") as f:
                 pub_key = serialization.load_pem_public_key(f.read())
                 
             pub_key.verify(

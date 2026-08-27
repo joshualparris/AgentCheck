@@ -23,18 +23,20 @@ def keys():
     return priv, pub, pub_bytes
 
 @pytest.fixture
-def key_env(keys, monkeypatch, tmp_path):
+def key_env(keys, tmp_path):
     priv, pub, pub_bytes = keys
     pem_path = tmp_path / "public.pem"
     pem_path.write_bytes(pub_bytes)
-    monkeypatch.setenv("AGY_PUBLIC_KEY_PATH", str(pem_path))
-    return priv
+    return priv, str(pem_path)
 
 @pytest.fixture
 def backend(key_env):
-    return LLMAccountabilityBackend("http://dummy")
+    priv, pem_path = key_env
+    return LLMAccountabilityBackend("http://dummy", public_key_path=pem_path)
 
 def sign_record(record, priv_key):
+    if isinstance(priv_key, tuple):
+        priv_key = priv_key[0]
     canon = json.dumps(record, sort_keys=True).encode("utf-8")
     sig = priv_key.sign(canon)
     record["signature_ed25519"] = base64.b64encode(sig).decode("utf-8")
@@ -80,6 +82,14 @@ def test_forged_localhost_pass_rejected(backend):
         mock_resp.json.return_value = {"status": "PASS", "evidence": {"exit_code": 0}}
         mock_post.return_value = mock_resp
         assert backend.get_tests_evidence("C:/fake", "python-full") is None
+
+def test_production_default_ignores_env_overrides(monkeypatch):
+    monkeypatch.setenv("PYTEST_CURRENT_TEST", "fake")
+    monkeypatch.setenv("AGY_ALLOW_TEST_KEY_OVERRIDE", "1")
+    monkeypatch.setenv("AGY_PUBLIC_KEY_PATH", "C:/Attacker/key.pem")
+    
+    backend = LLMAccountabilityBackend()
+    assert backend.public_key_path == "C:/ProgramData/AGYVerifier/public.pem"
 
 def test_no_fake_pytest_counts(backend, key_env):
     with patch("requests.post") as mock_post:
@@ -280,7 +290,7 @@ def test_integration_pushed_real_schema(backend, key_env, tmp_path):
     import json, hmac, hashlib
     
     agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
-    agy_service.private_key = key_env
+    agy_service.private_key = key_env[0]
     client = TestClient(agy_service.app)
 
     worker_evidence = {
@@ -321,7 +331,7 @@ def test_integration_test_counts_real_schema(backend, key_env, tmp_path):
     import json, hmac, hashlib
     
     agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
-    agy_service.private_key = key_env
+    agy_service.private_key = key_env[0]
     client = TestClient(agy_service.app)
     
     worker_evidence = {
@@ -330,8 +340,12 @@ def test_integration_test_counts_real_schema(backend, key_env, tmp_path):
         "passed": 9,
         "failures": 0,
         "skipped": 1,
+        "errors": 0,
+        "workspace_fingerprint": "xyz",
+        "workspace_file_count": 5,
         "python_executable": "C:\\ProgramData\\AGYRuntime\\python\\Scripts\\python.exe",
-        "python_executable_sha256": "fake_hash"
+        "python_executable_sha256": "fake_hash",
+        "pytest_version": "8.2.2"
     }
     
     job_nonce = "test-job-id"
@@ -366,13 +380,20 @@ def test_integration_inconsistent_tests(backend, key_env, tmp_path):
     import json, hmac, hashlib
     
     agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
-    agy_service.private_key = key_env
+    agy_service.private_key = key_env[0]
     client = TestClient(agy_service.app)
     
+    base_evidence = {
+        "workspace_fingerprint": "xyz",
+        "workspace_file_count": 5,
+        "python_executable": "C:\\ProgramData\\AGYRuntime\\python\\Scripts\\python.exe",
+        "python_executable_sha256": "fake_hash",
+        "pytest_version": "8.2.2"
+    }
     inconsistent_cases = [
-        {"exit_code": 0, "tests": 10, "passed": 8, "failures": 1, "skipped": 1, "errors": 0},
-        {"exit_code": 0, "tests": -1, "passed": -1, "failures": 0, "skipped": 0, "errors": 0},
-        {"exit_code": 0, "tests": 10, "passed": 8, "failures": 0, "skipped": 3, "errors": 0}
+        {"exit_code": 0, "tests": 10, "passed": 8, "failures": 1, "skipped": 1, "errors": 0, **base_evidence},
+        {"exit_code": 0, "tests": -1, "passed": -1, "failures": 0, "skipped": 0, "errors": 0, **base_evidence},
+        {"exit_code": 0, "tests": 10, "passed": 8, "failures": 0, "skipped": 3, "errors": 0, **base_evidence}
     ]
     
     for worker_evidence in inconsistent_cases:
@@ -406,7 +427,7 @@ def test_integration_stale_hardened_evidence(backend, key_env, tmp_path):
     from agentwitness.evidence.workspace import workspace_fingerprint
     
     agy_service.LEDGER_PATH = str(tmp_path / "ledger.jsonl")
-    agy_service.private_key = key_env
+    agy_service.private_key = key_env[0]
     client = TestClient(agy_service.app)
     
     fp, fp_count = workspace_fingerprint(str(tmp_path))
@@ -417,10 +438,12 @@ def test_integration_stale_hardened_evidence(backend, key_env, tmp_path):
         "passed": 10,
         "failures": 0,
         "skipped": 0,
+        "errors": 0,
         "workspace_fingerprint": fp,
         "workspace_file_count": fp_count,
         "python_executable": "C:\\ProgramData\\AGYRuntime\\python\\Scripts\\python.exe",
-        "python_executable_sha256": "fake_hash"
+        "python_executable_sha256": "fake_hash",
+        "pytest_version": "8.2.2"
     }
     
     canonical = json.dumps(worker_evidence, sort_keys=True).encode("utf-8")

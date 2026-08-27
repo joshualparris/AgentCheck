@@ -7,9 +7,6 @@ from agentwitness.models import PytestEvidence, GitEvidence, RemoteGitEvidence, 
 import os
 from cryptography.hazmat.primitives import serialization
 
-# In a real environment, this might be pinned or downloaded, but for now we read it from the Notary's path
-PUB_KEY_PATH = os.environ.get("AGY_PUBLIC_KEY_PATH", "C:/ProgramData/AGYVerifier/public.pem")
-
 class VerificationBackend(abc.ABC):
     @property
     @abc.abstractmethod

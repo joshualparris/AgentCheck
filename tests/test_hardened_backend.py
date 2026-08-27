@@ -106,9 +106,9 @@ def test_no_fake_pytest_counts(backend, key_env):
         assert ev.passed is None
         assert ev.collected is None
         
-def test_unknown_test_count_cannot_satisfy_minimum_collected(backend, key_env):
+def test_unknown_test_count_cannot_satisfy_minimum_collected(backend, key_env, tmp_path):
     req = Requirement(name="test", type="tests_pass", parameters={"minimum_collected": 1})
-    evaluator = ContractEvaluator(Ledger(), backend=backend)
+    evaluator = ContractEvaluator(Ledger(filepath=tmp_path / "receipts.jsonl"), backend=backend)
     
     with patch.object(backend, "get_tests_evidence") as mock_get:
         mock_get.return_value = PytestEvidence(exit_code=0, collected=None, passed=None, failed=None, skipped=None, workspace_file_count=None)
@@ -116,9 +116,9 @@ def test_unknown_test_count_cannot_satisfy_minimum_collected(backend, key_env):
         assert res.status == RequirementStatus.UNVERIFIED
         assert "an unknown number of" in res.explanation
 
-def test_zero_test_execution_cannot_satisfy(backend, key_env):
+def test_zero_test_execution_cannot_satisfy(backend, key_env, tmp_path):
     req = Requirement(name="test", type="tests_pass", parameters={"minimum_collected": 1})
-    evaluator = ContractEvaluator(Ledger(), backend=backend)
+    evaluator = ContractEvaluator(Ledger(filepath=tmp_path / "receipts.jsonl"), backend=backend)
     
     with patch.object(backend, "get_tests_evidence") as mock_get:
         mock_get.return_value = PytestEvidence(exit_code=0, collected=0, passed=0, failed=0, skipped=0, workspace_file_count=0)
@@ -156,9 +156,9 @@ def test_failed_git_fetch_cannot_produce_remote_verified(backend, key_env):
         local_ev, remote_ev = backend.get_push_evidence("C:/fake")
         assert remote_ev.remote_verified is False
 
-def test_hardened_backend_unavailable_unverified(backend):
+def test_hardened_backend_unavailable_unverified(backend, tmp_path):
     req = Requirement(name="test", type="tests_pass", parameters={"min_provenance": "HARDENED_OBSERVED"})
-    evaluator = ContractEvaluator(Ledger(), backend=backend)
+    evaluator = ContractEvaluator(Ledger(filepath=tmp_path / "receipts.jsonl"), backend=backend)
     
     with patch("requests.post", side_effect=Exception("Offline")):
         res = evaluator._evaluate_requirement(req, [])
@@ -213,7 +213,7 @@ def test_malformed_sha_not_verified(backend, key_env):
         assert remote_ev.remote_verified is False
         assert remote_ev.remote_verified is False
 
-def test_hardened_offline_with_broker_receipt_unverified(backend, key_env):
+def test_hardened_offline_with_broker_receipt_unverified(backend, key_env, tmp_path):
     # Requirement implicitly allows BROKER_WITNESSED
     req = Requirement(name="test", type="tests_pass")
     
@@ -231,7 +231,7 @@ def test_hardened_offline_with_broker_receipt_unverified(backend, key_env):
         ]
     )
     
-    ledger = Ledger()
+    ledger = Ledger(filepath=tmp_path / "receipts.jsonl")
     with patch.object(ledger, "read_all", return_value=[receipt]):
         # Run hardened mode (pass HARDENED_OBSERVED as floor)
         evaluator = ContractEvaluator(ledger, backend=backend)
@@ -239,7 +239,7 @@ def test_hardened_offline_with_broker_receipt_unverified(backend, key_env):
             res = evaluator._evaluate_requirement(req, [receipt], min_provenance_floor=Provenance.HARDENED_OBSERVED)
             assert res.status == RequirementStatus.UNVERIFIED
 
-def test_hardened_valid_receipt_satisfies(backend, key_env):
+def test_hardened_valid_receipt_satisfies(backend, key_env, tmp_path):
     req = Requirement(name="test", type="tests_pass")
     
     # Valid hardened backend observation
@@ -256,7 +256,7 @@ def test_hardened_valid_receipt_satisfies(backend, key_env):
         ]
     )
     
-    ledger = Ledger()
+    ledger = Ledger(filepath=tmp_path / "receipts.jsonl")
     with patch.object(ledger, "read_all", return_value=[receipt]):
         # Run hardened mode (pass HARDENED_OBSERVED as floor)
         evaluator = ContractEvaluator(ledger, backend=backend)
@@ -474,3 +474,20 @@ def test_integration_stale_hardened_evidence(backend, key_env, tmp_path):
                 assert ev.workspace_fingerprint != new_fp
                 
                 # The evaluator will reject it because evidence fingerprint != current fingerprint
+
+def test_agyrunner_cannot_write_agentwitness_dir():
+    import getpass
+    import os
+    if getpass.getuser() == 'AGYRunner':
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+        target = os.path.join(repo_root, '.agentwitness', 'test_probe.txt')
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, 'w') as f:
+                f.write('tamper')
+            pytest.fail('AGYRunner should not be able to write to .agentwitness')
+        except PermissionError:
+            pass
+        finally:
+            if os.path.exists(target):
+                os.remove(target)

@@ -329,7 +329,9 @@ def test_integration_test_counts_real_schema(backend, key_env, tmp_path):
         "tests": 10,
         "passed": 9,
         "failures": 0,
-        "skipped": 1
+        "skipped": 1,
+        "python_executable": "C:\\ProgramData\\AGYRuntime\\python\\Scripts\\python.exe",
+        "python_executable_sha256": "fake_hash"
     }
     
     job_nonce = "test-job-id"
@@ -416,7 +418,9 @@ def test_integration_stale_hardened_evidence(backend, key_env, tmp_path):
         "failures": 0,
         "skipped": 0,
         "workspace_fingerprint": fp,
-        "workspace_file_count": fp_count
+        "workspace_file_count": fp_count,
+        "python_executable": "C:\\ProgramData\\AGYRuntime\\python\\Scripts\\python.exe",
+        "python_executable_sha256": "fake_hash"
     }
     
     canonical = json.dumps(worker_evidence, sort_keys=True).encode("utf-8")

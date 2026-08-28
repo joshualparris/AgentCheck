@@ -13,8 +13,9 @@ def test_policy_require_approval_git_push():
     
 def test_policy_deny_force_push():
     gate = PolicyGate()
-    res = gate.check("git", ["push", "--force"])
-    assert res.decision == PolicyDecision.DENY
+    assert gate.check("git", ["push", "--force"]).decision == PolicyDecision.DENY
+    assert gate.check("git", ["push", "-f"]).decision == PolicyDecision.DENY
+    assert gate.check("git", ["push", "origin", "+main"]).decision == PolicyDecision.DENY
 
 def test_policy_require_approval_choco():
     gate = PolicyGate()

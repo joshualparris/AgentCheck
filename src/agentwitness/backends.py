@@ -18,7 +18,7 @@ class VerificationBackend(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def get_push_evidence(self, cwd: str) -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
+    def get_push_evidence(self, cwd: str, *, branch: str = "main", remote: str = "origin") -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
         pass
 
 
@@ -30,9 +30,9 @@ class LocalBackend(VerificationBackend):
     def get_tests_evidence(self, cwd: str, profile: str) -> Optional[PytestEvidence]:
         return None
 
-    def get_push_evidence(self, cwd: str) -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
+    def get_push_evidence(self, cwd: str, *, branch: str = "main", remote: str = "origin") -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
         from agentwitness.evidence.git import capture_git_state, capture_remote_git_evidence
-        return capture_git_state(cwd), capture_remote_git_evidence(cwd)
+        return capture_git_state(cwd), capture_remote_git_evidence(cwd, branch=branch, remote=remote)
 
 
 class LLMAccountabilityBackend(VerificationBackend):
@@ -102,8 +102,8 @@ class LLMAccountabilityBackend(VerificationBackend):
             workspace_file_count=evidence.get("workspace_file_count")
         )
 
-    def get_push_evidence(self, cwd: str) -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
-        evidence = self._certify("pushed", repo_path=cwd)
+    def get_push_evidence(self, cwd: str, *, branch: str = "main", remote: str = "origin") -> Tuple[Optional[GitEvidence], Optional[RemoteGitEvidence]]:
+        evidence = self._certify("pushed", repo_path=cwd, branch=branch, remote=remote)
         if not evidence:
             return None, None
 
@@ -135,11 +135,18 @@ class LLMAccountabilityBackend(VerificationBackend):
         else:
             remote_verified = False
         
-        remote_ev = RemoteGitEvidence(
-            local_head=head,
-            remote_head=ls_remote_sha,
-            remote_verified=remote_verified,
-            fetch_succeeded=remote_lookup_succeeded
-        )
+        # Hardened arbitrary-branch verification is currently limited to the currently checked-out branch.
+        if local_branch != branch and local_branch != "unknown":
+            remote_ev = None
+        else:
+            remote_ev = RemoteGitEvidence(
+                local_head=head,
+                remote_head=ls_remote_sha,
+                remote_verified=remote_verified,
+                remote=remote,
+                branch=local_branch,
+                repository=None,
+                fetch_succeeded=remote_lookup_succeeded
+            )
         
         return local_ev, remote_ev

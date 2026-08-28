@@ -238,24 +238,46 @@ class ContractEvaluator:
 
     def _eval_local_commit(self, req: Requirement, receipts: list) -> RequirementResult:
         expected_sha = req.parameters.get("commit_sha")
-        for receipt in reversed(receipts):
-            if not self._meets_provenance(receipt, req.min_provenance):
-                continue
-            executable = Path(receipt.resolved_executable).name.lower()
-            if executable not in {"git", "git.exe"} or "commit" not in receipt.argv:
-                continue
-            if receipt.execution_status != ExecutionStatus.SUCCEEDED:
-                continue
-            git_ev = next((ev for ev in receipt.environmental_evidence if self._ev_type(ev) == "git_state"), None)
-            if git_ev is None:
-                continue
-            head = self._ev_value(git_ev, "head", "")
-            if expected_sha and head != expected_sha:
-                return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful commit produced {head}, not required SHA {expected_sha}.")
-            if not git_commit_exists(receipt.cwd, head):
-                return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Commit receipt names {head}, but that commit cannot be independently resolved now.")
-            return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful witnessed git commit exists: {head}.")
-        return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="No successful witnessed git commit found in this task session.")
+        
+        # If not live, try to find a commit receipt as before
+        if not req.parameters.get("live", False):
+            for receipt in reversed(receipts):
+                if not self._meets_provenance(receipt, req.min_provenance):
+                    continue
+                executable = Path(receipt.resolved_executable).name.lower()
+                if executable not in {"git", "git.exe"} or "commit" not in receipt.argv:
+                    continue
+                if receipt.execution_status != ExecutionStatus.SUCCEEDED:
+                    continue
+                git_ev = next((ev for ev in receipt.environmental_evidence if self._ev_type(ev) == "git_state"), None)
+                if git_ev is None:
+                    continue
+                head = self._ev_value(git_ev, "head", "")
+                if expected_sha and head != expected_sha:
+                    return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful commit produced {head}, not required SHA {expected_sha}.")
+                if not git_commit_exists(receipt.cwd, head):
+                    return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Commit receipt names {head}, but that commit cannot be independently resolved now.")
+                return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful witnessed git commit exists: {head}.")
+            return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="No successful witnessed git commit found in this task session.")
+        
+        # Live observation (read-only verification)
+        state, _ = self.backend.get_push_evidence(os.getcwd())
+        if state is None:
+            return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently read the current git worktree.")
+            
+        head_to_check = expected_sha or state.head
+        if not head_to_check:
+            return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, explanation="No valid HEAD or expected SHA to verify.")
+            
+        receipt_id = self._record_observation(state, "git", ["cat-file", "-e", f"{head_to_check}^{{commit}}"], provenance=self.backend.provenance)
+        
+        if not git_commit_exists(os.getcwd(), head_to_check):
+            return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Commit {head_to_check} does not exist.")
+            
+        if expected_sha and state.head != expected_sha:
+            return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Local HEAD {state.head} does not match required SHA {expected_sha}.")
+            
+        return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Verified commit exists: {head_to_check}.")
 
     def _eval_remote_sha(self, req: Requirement, receipts: list) -> RequirementResult:
         expected_sha = req.parameters.get("commit_sha")
@@ -274,7 +296,7 @@ class ContractEvaluator:
         remote = req.parameters.get("remote", "origin")
         expected_repo = req.parameters.get("repository")
         
-        _, live = self.backend.get_push_evidence(os.getcwd())
+        _, live = self.backend.get_push_evidence(os.getcwd(), branch=branch, remote=remote)
         if live is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently inspect the current git remote.")
         

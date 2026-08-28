@@ -10,7 +10,7 @@ class PolicyResult:
 class PolicyGate:
     def __init__(self):
         self.rules = [
-            (re.compile(r"^git\s+push\s+.*(-f|--force)", re.IGNORECASE), PolicyDecision.DENY, "git.force_push", "Force pushing is destructive."),
+            (re.compile(r"^git\s+push\s+.*(?:-f|--force|\+)", re.IGNORECASE), PolicyDecision.DENY, "git.force_push", "Force pushing is destructive."),
             (re.compile(r"^git\s+reset\s+--hard", re.IGNORECASE), PolicyDecision.DENY, "git.reset_hard", "Hard reset is destructive."),
             (re.compile(r"^rm\s+-rf\s+/", re.IGNORECASE), PolicyDecision.DENY, "system.root_delete", "Root deletion is prohibited."),
             (re.compile(r"^(format|diskpart)\b", re.IGNORECASE), PolicyDecision.DENY, "system.disk", "Destructive disk operations are prohibited."),

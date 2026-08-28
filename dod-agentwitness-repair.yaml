@@ -1,0 +1,9 @@
+task_id: agentwitness-repair
+title: Fix AgentWitness limitations
+requirements:
+  - requirement_id: "r1"
+    type: tests_pass
+  - requirement_id: "r2"
+    type: local_commit_exists
+  - requirement_id: "r4"
+    type: clean_worktree

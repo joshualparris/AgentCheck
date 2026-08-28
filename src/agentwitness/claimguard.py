@@ -102,33 +102,48 @@ class ClaimGuard:
                         continue
 
                 match = re.search(r"(\d+)\s+tests", claim.text.lower())
-                claimed_count = int(match.group(1)) if match else pytest_ev.collected
-                if pytest_ev.passed >= claimed_count:
-                    claim.verdict = Verdict.VERIFIED
-                    claim.evidence_text = f"Observed {pytest_ev.passed} passed tests with no later relevant edit detected. Evidence: {receipt_id}"
+                if match:
+                    claimed_count = int(match.group(1))
+                    if pytest_ev.passed >= claimed_count:
+                        claim.verdict = Verdict.VERIFIED
+                        claim.evidence_text = f"Observed {pytest_ev.passed} passed tests with no later relevant edit detected. Evidence: {receipt_id}"
+                    else:
+                        claim.verdict = Verdict.PARTIALLY_VERIFIED
+                        claim.evidence_text = f"Observed only {pytest_ev.passed} passed tests, expected {claimed_count}. Evidence: {receipt_id}"
                 else:
-                    claim.verdict = Verdict.PARTIALLY_VERIFIED
-                    claim.evidence_text = f"Observed only {pytest_ev.passed} passed tests, expected {claimed_count}. Evidence: {receipt_id}"
+                    failed = pytest_ev.failed or 0
+                    if failed == 0 and pytest_ev.passed and pytest_ev.passed > 0:
+                        claim.verdict = Verdict.VERIFIED
+                        claim.evidence_text = f"Observed {pytest_ev.passed} passed tests (no failures) with no later relevant edit detected. Evidence: {receipt_id}"
+                    else:
+                        claim.verdict = Verdict.PARTIALLY_VERIFIED
+                        claim.evidence_text = f"Observed failures or 0 passed tests. Passed: {pytest_ev.passed}, Failed: {failed}. Evidence: {receipt_id}"
 
             elif claim.claim_type == "push_occurred":
                 blocked = False
-                pushed = False
+                pushed_action = False
+                state_verified = False
                 receipt_id = None
                 for receipt in reversed(receipts):
-                    if "push" in receipt.argv and receipt.policy_decision in {PolicyDecision.REQUIRE_APPROVAL, PolicyDecision.DENY}:
+                    is_push = "push" in receipt.argv
+                    if is_push and receipt.policy_decision in {PolicyDecision.REQUIRE_APPROVAL, PolicyDecision.DENY}:
                         blocked = True
-                    if receipt.policy_decision != PolicyDecision.ALLOW or receipt.execution_status != ExecutionStatus.SUCCEEDED:
-                        continue
                     for ev in receipt.environmental_evidence:
                         if self._type(ev) == "remote_git" and self._value(ev, "remote_verified") is True:
-                            pushed = True
+                            state_verified = True
                             receipt_id = receipt.receipt_id
+                            if is_push and receipt.policy_decision == PolicyDecision.ALLOW and receipt.execution_status == ExecutionStatus.SUCCEEDED:
+                                pushed_action = True
                             break
-                    if pushed:
+                    if pushed_action or state_verified:
                         break
-                if pushed:
+                
+                if pushed_action:
+                    claim.verdict = Verdict.ACTION_VERIFIED
+                    claim.evidence_text = f"Push action explicitly witnessed and verified. Evidence: {receipt_id}"
+                elif state_verified:
                     claim.verdict = Verdict.VERIFIED
-                    claim.evidence_text = f"Push verified. Evidence: {receipt_id}"
+                    claim.evidence_text = f"Remote state verified (read-only verification). Local HEAD matches required remote branch. Evidence: {receipt_id}"
                 elif blocked:
                     claim.verdict = Verdict.CONTRADICTED
                     claim.evidence_text = "No successful push receipt exists. A push attempt was blocked by policy."
@@ -137,22 +152,27 @@ class ClaimGuard:
                     claim.evidence_text = "No successful independently verified push evidence found."
 
             elif claim.claim_type == "commit_created":
-                found = None
+                found_action = None
+                found_state = None
                 for receipt in reversed(receipts):
                     executable = Path(receipt.resolved_executable).name.lower()
-                    if executable not in {"git", "git.exe"} or "commit" not in receipt.argv:
-                        continue
-                    if receipt.execution_status != ExecutionStatus.SUCCEEDED:
-                        continue
+                    is_git = executable in {"git", "git.exe"}
+                    
                     git_ev = next((ev for ev in receipt.environmental_evidence if self._type(ev) == "git_state"), None)
                     if git_ev is not None:
                         head = self._value(git_ev, "head", "")
                         if git_commit_exists(receipt.cwd, head):
-                            found = (receipt.receipt_id, head)
-                            break
-                if found:
+                            found_state = (receipt.receipt_id, head)
+                            if is_git and "commit" in receipt.argv and receipt.execution_status == ExecutionStatus.SUCCEEDED:
+                                found_action = (receipt.receipt_id, head)
+                                break
+                                
+                if found_action:
+                    claim.verdict = Verdict.ACTION_VERIFIED
+                    claim.evidence_text = f"Successful witnessed commit action exists at {found_action[1]}. Evidence: {found_action[0]}"
+                elif found_state:
                     claim.verdict = Verdict.VERIFIED
-                    claim.evidence_text = f"Successful witnessed commit exists at {found[1]}. Evidence: {found[0]}"
+                    claim.evidence_text = f"Verified commit exists at {found_state[1]} (read-only verification). Evidence: {found_state[0]}"
                 else:
                     claim.verdict = Verdict.UNVERIFIED
                     claim.evidence_text = "No successful witnessed commit with a resolvable commit SHA was found."

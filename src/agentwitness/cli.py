@@ -105,10 +105,13 @@ def main():
 
     aw_dir = Path(os.environ.get("AW_DATA_DIR", cwd / ".agentwitness"))
     if not aw_dir.exists():
-        print(json.dumps({"decision": "allow"}))
+        print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: AW_DATA_DIR is missing."}))
         return
 
     ledger = Ledger(filepath=aw_dir / "receipts.jsonl")
+    if not ledger.verify_chain():
+        print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: The ledger chain has broken signatures or hash links."}))
+        return
 
     active_bindings = {}
     for r in ledger.read_all():

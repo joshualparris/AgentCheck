@@ -127,27 +127,27 @@ def test_real_done_task_allows(tmp_path):
 
     dummy_test = tmp_path / "test_dummy.py"
     dummy_test.write_text("def test_ok():\n    assert True\n")
-    
+
     contract_yaml = tmp_path / "contract.yaml"
-    contract_yaml.write_text("""
+    contract_yaml.write_text(f"""
 task_id: test-task
 requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "pytest"
-        args: []
+        command: "{sys.executable.replace('\\', '/')}"
+        args: ["-m", "pytest"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
-    
+
     good_transcript = tmp_path / "transcript.jsonl"
     good_transcript.write_text('{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","created_at":"2026-08-26T00:00:01Z","content":"I am done."}\n', encoding="utf-8")
     input_data = {
         "conversationId": "conv-1",
         "transcriptPath": str(good_transcript.resolve())
     }
-    
+
     proc = run_hook(tmp_path, input_data)
     res = json.loads(proc.stdout)
     assert res["decision"] == "allow", res.get("reason", "")
@@ -158,7 +158,7 @@ def test_tampered_real_task_continues(tmp_path):
     data = json.loads(contract_file.read_text(encoding="utf-8"))
     data["title"] = "Tampered!"
     contract_file.write_text(json.dumps(data), encoding="utf-8")
-    
+
     good_transcript = tmp_path / "transcript.jsonl"
     good_transcript.write_text('{"step_index":1}\n')
     input_data = {
@@ -187,18 +187,18 @@ def test_repeated_stop_import_idempotent(tmp_path):
     # Both fail tests_pass but it proves it didn't crash on duplicate import.
 def test_verification_command_satisfies_tests_pass(tmp_path):
     contract_yaml = tmp_path / "contract.yaml"
-    contract_yaml.write_text('''
+    contract_yaml.write_text(f'''
 task_id: test-task-1
 requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "pytest"
-        args: ["-c", "echo 'green'"]
+        command: "{sys.executable.replace('\\', '/')}"
+        args: ["-m", "pytest", "-c", "echo 'green'"]
 ''')
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     run_aw(["task", "bind", "test-task-1", "conv-1"], cwd=str(tmp_path))
-    
+
     good_transcript = tmp_path / "transcript.jsonl"
     good_transcript.write_text('{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","created_at":"2026-08-26T00:00:01Z","content":"I am done."}\n', encoding="utf-8")
     input_data = {
@@ -206,36 +206,38 @@ requirements:
         "transcriptPath": str(good_transcript.resolve())
     }
     # It will fail TESTS_PASS because powershell -c "echo 'green'" is not pytest output!
-    # Ah, TESTS_PASS specifically expects pytest output. Wait! 
+    # Ah, TESTS_PASS specifically expects pytest output. Wait!
     # Can verification_command be used to run a command that satisfies TESTS_PASS?
     # Yes, it expects it to produce PytestEvidence. We can't fake it with echo. We must run a real pytest!
 
     dummy_test = tmp_path / "test_dummy.py"
     dummy_test.write_text("def test_ok():\n    assert True\n")
-    
+
     contract_yaml = tmp_path / "contract.yaml"
-    contract_yaml.write_text("""
+    contract_yaml.write_text(f"""
 task_id: test-task
 requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "pytest"
-        args: []
+        command: "{sys.executable.replace('\\', '/')}"
+        args: ["-m", "pytest"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     run_aw(["task", "bind", "test-task", "conv-2"], cwd=str(tmp_path))
-    
+
     good_transcript = tmp_path / "transcript.jsonl"
     good_transcript.write_text('{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","created_at":"2026-08-26T00:00:01Z","content":"I am done."}\n', encoding="utf-8")
     input_data = {
         "conversationId": "conv-2",
         "transcriptPath": str(good_transcript.resolve())
     }
-    
+
     proc = run_hook(tmp_path, input_data)
     res = json.loads(proc.stdout)
     assert res["decision"] == "allow", res.get("reason", "")
+
+
 
 
 

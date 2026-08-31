@@ -4,7 +4,7 @@
     "Stop": [
       {
         "type": "command",
-        "command": "\"C:\\dev\\LLMLieDetector\\AgentWitness\\venv\\Scripts\\python.exe\" \"C:\\dev\\LLMLieDetector\\AgentWitness\\.agents\\scripts\\aw-gate.py\"",
+        "command": "venv/Scripts/python.exe .agents/scripts/aw-gate.py",
         "timeout": 30
       }
     ]

@@ -26,6 +26,13 @@ def classify_pytest_scope(argv: Iterable[str]) -> Tuple[bool, List[str]]:
     """
 
     args = list(argv)
+
+    # Strip python invocation args like `-m pytest` or `pytest`
+    if len(args) >= 2 and args[0] == "-m" and args[1] == "pytest":
+        args = args[2:]
+    elif len(args) >= 1 and args[0].endswith("pytest"):
+        args = args[1:]
+
     reasons: List[str] = []
     i = 0
     while i < len(args):

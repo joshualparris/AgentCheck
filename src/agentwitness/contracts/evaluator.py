@@ -74,6 +74,9 @@ class ContractEvaluator:
                 if self._ev_value(ev, "task_id") == contract.task_id:
                     anchors.append(self._ev_value(ev, "contract_hash", ""))
 
+        if contract.contract_version < 2 and anchors:
+            return "Tampering detected: Contract downgraded to v1 but creation anchors exist."
+
         if contract.contract_version >= 2 and not anchors:
             return "Tampering/untrusted contract: no signed ContractCreationEvidence exists for this v2 contract."
         if not anchors:
@@ -88,6 +91,15 @@ class ContractEvaluator:
 
     def evaluate(self, contract: TaskContract, min_provenance_floor: Optional["Provenance"] = None) -> TaskEvaluation:
         self._active_session = contract.session_id
+
+        if not self.ledger.verify_chain():
+            system_req = Requirement(requirement_id="system-ledger-integrity", type=RequirementType.NO_POLICY_VIOLATIONS)
+            return TaskEvaluation(
+                contract=contract,
+                status=TaskStatus.BLOCKED,
+                results=[RequirementResult(requirement=system_req, status=RequirementStatus.ERROR, explanation="Tampering detected: The AgentWitness ledger has broken signatures or hash links. Verification cannot proceed.")],
+            )
+
         all_receipts = self.ledger.read_all()
 
         anchor_error = self._anchor_error(contract, all_receipts)
@@ -138,10 +150,10 @@ class ContractEvaluator:
         if min_provenance_floor:
             if self._provenance_strength(min_provenance_floor) > self._provenance_strength(actual_min):
                 actual_min = min_provenance_floor
-                
+
         # Filter receipts to only those that meet the minimum provenance
         valid_receipts = [r for r in receipts if self._meets_provenance(r, actual_min)]
-        
+
         dispatch = {
             RequirementType.TESTS_PASS: self._eval_tests_pass,
             RequirementType.LOCAL_COMMIT_EXISTS: self._eval_local_commit,
@@ -155,10 +167,10 @@ class ContractEvaluator:
         handler = dispatch.get(req.type)
         if not handler:
             return RequirementResult(requirement=req, status=RequirementStatus.ERROR, explanation=f"Unknown requirement type: {req.type}")
-            
+
         if req.type == RequirementType.NO_POLICY_VIOLATIONS:
             return handler(req, receipts)
-            
+
         return handler(req, valid_receipts)
 
     def _eval_tests_pass(self, req: Requirement, receipts: list) -> RequirementResult:
@@ -171,7 +183,7 @@ class ContractEvaluator:
             latest_receipt = self.ledger.get_latest_receipt()
             if latest_receipt and latest_receipt.receipt_id == receipt_id:
                 receipts.append(latest_receipt)
-                
+
         for receipt in reversed(receipts):
             for ev in receipt.environmental_evidence:
                 if self._ev_type(ev) != "pytest":
@@ -180,7 +192,7 @@ class ContractEvaluator:
                 exit_code = self._ev_value(ev, "exit_code")
                 failed = self._ev_value(ev, "failed")
                 collected = self._ev_value(ev, "collected")
-                
+
                 if receipt.execution_status != ExecutionStatus.SUCCEEDED or exit_code != 0 or (failed is not None and failed > 0):
                     return RequirementResult(
                         requirement=req,
@@ -238,7 +250,7 @@ class ContractEvaluator:
 
     def _eval_local_commit(self, req: Requirement, receipts: list) -> RequirementResult:
         expected_sha = req.parameters.get("commit_sha")
-        
+
         # If not live, try to find a commit receipt as before
         if not req.parameters.get("live", False):
             for receipt in reversed(receipts):
@@ -257,38 +269,48 @@ class ContractEvaluator:
                     return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful commit produced {head}, not required SHA {expected_sha}.")
                 if not git_commit_exists(receipt.cwd, head):
                     return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Commit receipt names {head}, but that commit cannot be independently resolved now.")
-                
+
                 # Protect against empty synthetic commits
                 import subprocess
-                diff_cmd = subprocess.run(["git", "diff", f"{head}~1", head, "--name-only"], capture_output=True, text=True, cwd=receipt.cwd)
+                parent_cmd = subprocess.run(["git", "rev-parse", f"{head}~1"], capture_output=True, text=True, cwd=receipt.cwd)
+                if parent_cmd.returncode != 0:
+                    base_tree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+                else:
+                    base_tree = f"{head}~1"
+                diff_cmd = subprocess.run(["git", "diff", base_tree, head, "--name-only"], capture_output=True, text=True, cwd=receipt.cwd)
                 changed_files = [f.strip() for f in diff_cmd.stdout.splitlines() if f.strip()]
-                meaningful_files = [f for f in changed_files if not f.startswith(".agentwitness")]
+
+                # Exclude AgentWitness metadata and state paths from counting as "meaningful" work
+                meaningful_files = [
+                    f for f in changed_files
+                    if not (f.startswith(".agentwitness/") or f.startswith(".agents/"))
+                ]
                 if not meaningful_files:
                     if changed_files:
                         return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation="Commit only contains changes to verifier/unrelated files.")
                     else:
                         return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation="Commit is empty and does not satisfy the requirement.")
-                
+
                 return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful witnessed git commit exists: {head}.")
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="No successful witnessed git commit found in this task session.")
-        
+
         # Live observation (read-only verification)
         state, _ = self.backend.get_push_evidence(os.getcwd())
         if state is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently read the current git worktree.")
-            
+
         head_to_check = expected_sha or state.head
         if not head_to_check:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, explanation="No valid HEAD or expected SHA to verify.")
-            
+
         receipt_id = self._record_observation(state, "git", ["cat-file", "-e", f"{head_to_check}^{{commit}}"], provenance=self.backend.provenance)
-        
+
         if not git_commit_exists(os.getcwd(), head_to_check):
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Commit {head_to_check} does not exist.")
-            
+
         if expected_sha and state.head != expected_sha:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Local HEAD {state.head} does not match required SHA {expected_sha}.")
-            
+
         return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Verified commit exists: {head_to_check}.")
 
     def _eval_remote_sha(self, req: Requirement, receipts: list) -> RequirementResult:
@@ -307,13 +329,13 @@ class ContractEvaluator:
         branch = req.parameters.get("branch", "main")
         remote = req.parameters.get("remote", "origin")
         expected_repo = req.parameters.get("repository")
-        
+
         _, live = self.backend.get_push_evidence(os.getcwd(), branch=branch, remote=remote)
         if live is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently inspect the current git remote.")
-        
+
         receipt_id = self._record_observation(live, "git", ["fetch", remote, branch], provenance=self.backend.provenance)
-        
+
         if expected_repo and (live.repository or "").lower() != expected_repo.lower():
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Observed repository {live.repository!r} does not match required {expected_repo}.")
         if not live.fetch_succeeded:
@@ -341,9 +363,9 @@ class ContractEvaluator:
         state, _ = self.backend.get_push_evidence(os.getcwd())
         if state is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not independently read the current git worktree.")
-        
+
         receipt_id = self._record_observation(state, "git", ["status", "--porcelain"], provenance=self.backend.provenance)
-        
+
         if state.dirty:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt_id], explanation=f"Current worktree is dirty ({len(state.modified)} changed path(s)).")
         return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt_id], explanation="Current independently observed worktree is clean.")
@@ -352,11 +374,11 @@ class ContractEvaluator:
         violating = [r.receipt_id for r in receipts if r.policy_decision == PolicyDecision.DENY]
         if violating:
             return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=violating, explanation="Denied policy actions were recorded in this task session.")
-            
+
         bypassed = [r.receipt_id for r in receipts if r.policy_evaluation in (PolicyEvaluation.NOT_EVALUATED, PolicyEvaluation.BYPASSED)]
         if bypassed:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=bypassed, explanation="Some actions in this session were not evaluated by the policy engine (e.g. transcript imports).")
-            
+
         return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, explanation="All recorded actions passed policy evaluation.")
 
     def _latest_remote_sha(self, receipts: list) -> Optional[str]:
@@ -385,10 +407,10 @@ class ContractEvaluator:
         if hits is None:
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="Could not read a git diff to check for credential patterns.")
         evidence = SecretScanEvidence(commit_sha=commit_sha, hit_count=len(hits), files=sorted({h.path for h in hits}), patterns=sorted({h.pattern for h in hits}))
-        
+
         from agentwitness.models import Provenance
         receipt_id = self._record_observation(evidence, "git", ["secret-scan", commit_sha or "working-tree"], provenance=Provenance.LIVE_OBSERVED)
-        
+
         if hits:
             shown = ", ".join(f"{h.path}:{h.line} ({h.pattern})" for h in hits[:5])
             more = f"; +{len(hits) - 5} more" if len(hits) > 5 else ""
@@ -405,7 +427,7 @@ class ContractEvaluator:
             changed_blocks=[f"{c.path}::{c.name}" for c in check.changes],
             errors=check.errors[:20],
         )
-        
+
         from agentwitness.models import Provenance
         receipt_id = self._record_observation(evidence, "git", ["protected-sections-check"], provenance=Provenance.LIVE_OBSERVED)
 

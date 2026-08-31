@@ -35,19 +35,19 @@ def integration_install(integration: str, scope: str = typer.Option("workspace",
     if integration != "antigravity":
         console.print(f"[bold red]Unknown integration '{integration}'.[/bold red]")
         raise typer.Exit(1)
-    
+
     if scope != "workspace":
         console.print(f"[bold red]Only workspace scope is currently supported.[/bold red]")
         raise typer.Exit(1)
-        
+
     agents_dir = Path(".agents")
     agents_dir.mkdir(exist_ok=True)
     scripts_dir = agents_dir / "scripts"
     scripts_dir.mkdir(exist_ok=True)
-    
+
     hooks_file = agents_dir / "hooks.json"
     script_file = scripts_dir / "aw-gate.py"
-    
+
     import textwrap
     script_content = textwrap.dedent('''\
 import sys
@@ -199,25 +199,23 @@ if __name__ == '__main__':
     main()
     ''')
     script_file.write_text(script_content, encoding="utf-8")
-    
+
     import sys
     import json
-    abs_python = str(sys.executable).replace("\\\\", "/")
-    abs_script = str(script_file.resolve()).replace("\\\\", "/")
     hooks_data = {
       "agentwitness-gate": {
         "enabled": True,
         "Stop": [
           {
             "type": "command",
-            "command": f'"{abs_python}" "{abs_script}"',
+            "command": "venv/Scripts/python.exe .agents/scripts/aw-gate.py",
             "timeout": 30
           }
         ]
       }
     }
     hooks_file.write_text(json.dumps(hooks_data, indent=2), encoding="utf-8")
-    
+
     console.print(f"[bold green]Installed Antigravity integration at {hooks_file}[/bold green]")
 
 @integration_app.command("doctor")
@@ -225,12 +223,12 @@ def integration_doctor(integration: str):
     if integration != "antigravity":
         console.print(f"[bold red]Unknown integration '{integration}'.[/bold red]")
         raise typer.Exit(1)
-        
+
     hooks_file = Path(".agents/hooks.json")
     if not hooks_file.exists():
         console.print("[bold red]hooks.json not found.[/bold red]")
         raise typer.Exit(1)
-        
+
     import json
     try:
         hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
@@ -238,25 +236,25 @@ def integration_doctor(integration: str):
     except Exception as e:
         console.print(f"[bold red]Failed to parse hooks.json: {e}[/bold red]")
         raise typer.Exit(1)
-        
+
     import shlex
     parts = shlex.split(command)
     python_path = parts[0]
     script_path = parts[1]
-    
+
     if not Path(python_path).exists():
         console.print(f"[bold red]Python interpreter not found: {python_path}[/bold red]")
         raise typer.Exit(1)
-        
+
     if not Path(script_path).exists():
         console.print(f"[bold red]Hook script not found: {script_path}[/bold red]")
         raise typer.Exit(1)
-        
+
     ledger = Ledger()
     if not ledger.filepath.parent.exists():
         console.print("[bold red]AgentWitness is not initialized in this directory.[/bold red]")
         raise typer.Exit(1)
-        
+
     console.print("[bold green]Antigravity integration is healthy.[/bold green]")
 
 @task_app.command("create")
@@ -340,13 +338,13 @@ def task_bind(task_id: str = typer.Argument(...), conversation_id: str = typer.A
     from agentwitness.models import TaskBindingEvidence, Receipt, PolicyEvaluation
     from agentwitness.broker import WitnessBroker
     import os
-    
+
     storage = ContractStorage()
     contract = storage.load(task_id)
     if not contract:
         console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
         raise typer.Exit(1)
-        
+
     ev = TaskBindingEvidence(
         task_id=contract.task_id,
         session_id=contract.session_id,
@@ -377,13 +375,13 @@ def task_status(task_id: str, hardened: bool = typer.Option(False, "--hardened",
     if not contract:
         console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
         raise typer.Exit(1)
-    
+
     from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
     from agentwitness.models import Provenance
-    
+
     backend = LLMAccountabilityBackend() if hardened else LocalBackend()
     floor = Provenance.HARDENED_OBSERVED if hardened else None
-    
+
     print_task_evaluation(ContractEvaluator(Ledger(), backend=backend).evaluate(contract, min_provenance_floor=floor))
 
 
@@ -395,13 +393,13 @@ def task_verify(task_id: str, hardened: bool = typer.Option(False, "--hardened",
     if not contract:
         console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
         raise typer.Exit(1)
-    
+
     from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
     from agentwitness.models import Provenance
-    
+
     backend = LLMAccountabilityBackend() if hardened else LocalBackend()
     floor = Provenance.HARDENED_OBSERVED if hardened else None
-    
+
     eval_result = ContractEvaluator(Ledger(), backend=backend).evaluate(contract, min_provenance_floor=floor)
     print_task_evaluation(eval_result)
     if eval_result.status != TaskStatus.DONE:
@@ -503,13 +501,13 @@ def final_check(
         if not contract:
             console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
             raise typer.Exit(1)
-            
+
         from agentwitness.backends import LLMAccountabilityBackend, LocalBackend
         from agentwitness.models import Provenance
-        
+
         backend = LLMAccountabilityBackend() if hardened else LocalBackend()
         floor = Provenance.HARDENED_OBSERVED if hardened else None
-        
+
         evaluation = ContractEvaluator(Ledger(), backend=backend).evaluate(contract, min_provenance_floor=floor)
         print_task_evaluation(evaluation)
         task_ok = evaluation.status == TaskStatus.DONE
@@ -537,22 +535,23 @@ def sync_transcript(conversation_id: str):
     """
     app_data = Path.home() / ".gemini" / "antigravity"
     transcript_path = app_data / "brain" / conversation_id / ".system_generated" / "logs" / "transcript.jsonl"
-    
+
     if not transcript_path.exists():
         console.print(f"[red]Error: Transcript not found at {transcript_path}[/red]")
         raise typer.Exit(code=1)
-        
+
     console.print(f"Parsing Antigravity transcript: {transcript_path}")
     adapter = AntigravityAdapter(transcript_path)
     receipts, stats = adapter.parse_receipts()
-    
+
     ledger = Ledger(filepath=aw_dir / "receipts.jsonl")
     for receipt in receipts:
         ledger.append(receipt)
-        
+
     console.print(f"Imported: {stats['imported']}")
     console.print(f"Already seen: {stats['already_seen']}")
     console.print(f"Ambiguous: {stats['ambiguous']}")
     console.print(f"Rejected: {stats['rejected']}")
+
 
 

@@ -88,9 +88,18 @@ def test_local_commit_requires_success_and_git_state(temp_ledger, monkeypatch):
     assert missing.results[0].status == RequirementStatus.UNVERIFIED
 
     monkeypatch.setattr(evaluator_module, "git_commit_exists", lambda cwd, sha: True)
+
+    import subprocess
+    class MockCompletedProcess:
+        def __init__(self):
+            self.returncode = 0
+            self.stdout = "src/app.py\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: MockCompletedProcess())
+
     temp_ledger.append(Receipt(receipt_id="success-with-state", session_id="s4", timestamp_start="t", timestamp_end="t", cwd="/", resolved_executable="git", argv=["commit", "-m", "x"], policy_decision=PolicyDecision.ALLOW, execution_status=ExecutionStatus.SUCCEEDED, environmental_evidence=[GitEvidence(head="abc123", branch="main", dirty=False, modified=[])]))
     success = evaluator.evaluate(contract)
-    assert success.results[0].status in {RequirementStatus.SATISFIED, RequirementStatus.UNSATISFIED}
+    assert success.results[0].status == RequirementStatus.SATISFIED
 
 
 def test_latest_test_failure_fails_task(temp_ledger):

@@ -63,7 +63,7 @@ class WitnessBroker:
             is_pytest = (
                 command_lower == "pytest"
                 or command_lower.endswith("pytest.exe")
-                or (command_lower in {"python", "python3", "py", "python.exe"} and "pytest" in args)
+                or (os.path.basename(command_lower) in {"python", "python3", "py", "python.exe"} and "pytest" in args)
             )
             if is_pytest:
                 pytest_ev = parse_pytest_output(result.returncode, result.stdout)

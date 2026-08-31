@@ -58,6 +58,10 @@ def main():
 
     ledger = Ledger(filepath=aw_dir / "receipts.jsonl")
 
+    if not ledger.verify_chain():
+        print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: The ledger chain has broken signatures or hash links."}))
+        return
+
     active_bindings = {}
     for r in ledger.read_all():
         for ev in r.environmental_evidence:

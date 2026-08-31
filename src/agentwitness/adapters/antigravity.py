@@ -104,7 +104,7 @@ class AntigravityAdapter:
                                 output_match.group(1) if output_match else "", 
                                 data.get("created_at"),
                                 existing_import_ids, receipts, stats, 
-                                result_raw_event, result_id
+                                result_raw_event, result_id, bound_session_id
                             )
                         else:
                             stats["ambiguous"] += len(sync_queue)
@@ -133,7 +133,7 @@ class AntigravityAdapter:
                                     output_match.group(1) if output_match else "", 
                                     data.get("created_at"),
                                     existing_import_ids, receipts, stats, 
-                                    result_raw_event, result_id
+                                    result_raw_event, result_id, bound_session_id
                                 )
                             else:
                                 stats["ambiguous"] += 1
@@ -145,7 +145,7 @@ class AntigravityAdapter:
 
         return receipts, stats
 
-    def _process_command_result(self, cmd_info, exit_code, stdout_text, end_time, existing_import_ids, receipts, stats, result_raw_event, result_id):
+    def _process_command_result(self, cmd_info, exit_code, stdout_text, end_time, existing_import_ids, receipts, stats, result_raw_event, result_id, bound_session_id=None):
         command_raw_hash = hashlib.sha256(cmd_info["raw_event"].encode("utf-8")).hexdigest()
         result_raw_hash = hashlib.sha256(result_raw_event.encode("utf-8")).hexdigest()
         
@@ -201,5 +201,6 @@ class AntigravityAdapter:
         receipts.append(receipt)
         existing_import_ids.add(import_id)
         stats["imported"] += 1
+
 
 

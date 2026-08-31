@@ -4,7 +4,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 import hashlib
 
-KEY_PATH = Path(os.getcwd()) / ".agentwitness" / "keys"
+KEY_PATH = Path(os.environ.get("AW_DATA_DIR", Path(os.getcwd()) / ".agentwitness")) / "keys"
 
 class CryptoSigner:
     def __init__(self, key_dir: Path = KEY_PATH):

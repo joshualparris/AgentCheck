@@ -257,6 +257,18 @@ class ContractEvaluator:
                     return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful commit produced {head}, not required SHA {expected_sha}.")
                 if not git_commit_exists(receipt.cwd, head):
                     return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Commit receipt names {head}, but that commit cannot be independently resolved now.")
+                
+                # Protect against empty synthetic commits
+                import subprocess
+                diff_cmd = subprocess.run(["git", "diff", f"{head}~1", head, "--name-only"], capture_output=True, text=True, cwd=receipt.cwd)
+                changed_files = [f.strip() for f in diff_cmd.stdout.splitlines() if f.strip()]
+                meaningful_files = [f for f in changed_files if not f.startswith(".agentwitness")]
+                if not meaningful_files:
+                    if changed_files:
+                        return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation="Commit only contains changes to verifier/unrelated files.")
+                    else:
+                        return RequirementResult(requirement=req, status=RequirementStatus.UNSATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation="Commit is empty and does not satisfy the requirement.")
+                
                 return RequirementResult(requirement=req, status=RequirementStatus.SATISFIED, evidence_receipt_ids=[receipt.receipt_id], explanation=f"Successful witnessed git commit exists: {head}.")
             return RequirementResult(requirement=req, status=RequirementStatus.UNVERIFIED, explanation="No successful witnessed git commit found in this task session.")
         

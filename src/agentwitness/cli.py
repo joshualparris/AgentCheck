@@ -103,7 +103,7 @@ def main():
         cwd = cwd.parent
     os.chdir(cwd)
 
-    aw_dir = cwd / ".agentwitness"
+    aw_dir = Path(os.environ.get("AW_DATA_DIR", cwd / ".agentwitness"))
     if not aw_dir.exists():
         print(json.dumps({"decision": "allow"}))
         return

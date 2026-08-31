@@ -51,7 +51,7 @@ def main():
         cwd = cwd.parent
     os.chdir(cwd)
 
-    aw_dir = cwd / ".agentwitness"
+    aw_dir = Path(os.environ.get("AW_DATA_DIR", cwd / ".agentwitness"))
     if not aw_dir.exists():
         print(json.dumps({"decision": "allow"}))
         return
@@ -67,8 +67,12 @@ def main():
                 active_bindings[b_task_id] = b_session_id
 
     if len(active_bindings) == 0:
-        print(json.dumps({"decision": "allow"}))
-        return
+        if os.environ.get("AW_DATA_DIR") or (cwd / ".agentwitness").exists():
+            print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: No active task bound to this conversation in a protected environment. Task may have been deleted or never bound."}))
+            return
+        else:
+            print(json.dumps({"decision": "allow"}))
+            return
     elif len(active_bindings) > 1:
         print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: Conflicting task bindings for this conversation."}))
         return

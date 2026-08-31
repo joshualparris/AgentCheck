@@ -121,7 +121,7 @@ def test_wrong_conversation_evidence_ignored(tmp_path):
     }
     proc = run_hook(tmp_path, input_data)
     res = json.loads(proc.stdout)
-    assert res["decision"] == "allow", res.get("reason", "")
+    assert res["decision"] == "continue" and "No active task bound" in res.get("reason", "")
 def test_real_done_task_allows(tmp_path):
     # create a mock verification command that succeeds!
 

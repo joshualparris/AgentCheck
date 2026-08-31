@@ -5,7 +5,7 @@ from typing import List, Optional
 from agentwitness.models import Receipt
 from agentwitness.crypto import CryptoSigner, hash_payload
 
-DEFAULT_LEDGER_PATH = Path(os.getcwd()) / ".agentwitness" / "receipts.jsonl"
+DEFAULT_LEDGER_PATH = Path(os.environ.get("AW_DATA_DIR", Path(os.getcwd()) / ".agentwitness")) / "receipts.jsonl"
 
 class Ledger:
     def __init__(self, filepath: Path = DEFAULT_LEDGER_PATH, signer: Optional[CryptoSigner] = None):

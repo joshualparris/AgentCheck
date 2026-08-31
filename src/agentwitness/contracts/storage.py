@@ -14,7 +14,7 @@ from agentwitness.models import (
     Receipt,
 )
 
-DEFAULT_TASKS_DIR = Path(os.getcwd()) / ".agentwitness" / "tasks"
+DEFAULT_TASKS_DIR = Path(os.environ.get("AW_DATA_DIR", Path(os.getcwd()) / ".agentwitness")) / "tasks"
 
 
 class ContractStorage:

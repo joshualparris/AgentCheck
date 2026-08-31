@@ -6,24 +6,29 @@ from pathlib import Path
 import os
 import shutil
 
-def run_hook(tmp_path, input_data):
-    script_path = Path('.agents/scripts/aw-gate.py').resolve()
-    agents_dir = tmp_path / ".agents"
+def run_hook(repo_root, input_data):
+    script_path = Path(os.getcwd()) / ".agents/scripts/aw-gate.py"
+    agents_dir = repo_root / ".agents"
     agents_dir.mkdir(exist_ok=True)
-    
-    proc = subprocess.run(
+    env = os.environ.copy()
+    if "AW_SESSION_ID" in env:
+        del env["AW_SESSION_ID"]
+    return subprocess.run(
         [sys.executable, str(script_path)],
         input=json.dumps(input_data).encode("utf-8"),
         capture_output=True,
-        cwd=str(agents_dir)
+        cwd=str(agents_dir),
+        env=env
     )
-    return proc
 
 def run_aw(args, cwd):
     aw_path = Path(sys.executable).parent / "aw.exe"
     if not aw_path.exists():
         aw_path = Path(sys.executable).parent / "aw"
-    return subprocess.run([str(aw_path)] + args, capture_output=True, cwd=cwd, text=True)
+    env = os.environ.copy()
+    if "AW_SESSION_ID" in env:
+        del env["AW_SESSION_ID"]
+    return subprocess.run([str(aw_path)] + args, capture_output=True, cwd=cwd, text=True, env=env)
 
 def setup_real_task(tmp_path, task_id="test-task", conv_id="conv-1"):
     contract_yaml = tmp_path / "contract.yaml"
@@ -118,7 +123,6 @@ def test_wrong_conversation_evidence_ignored(tmp_path):
     res = json.loads(proc.stdout)
     assert res["decision"] == "allow", res.get("reason", "")
 def test_real_done_task_allows(tmp_path):
-    setup_real_task(tmp_path)
     # create a mock verification command that succeeds!
 
     dummy_test = tmp_path / "test_dummy.py"
@@ -132,7 +136,7 @@ requirements:
     parameters:
       verification_command:
         command: "pytest"
-        args: ["test_dummy.py"]
+        args: []
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
@@ -184,7 +188,7 @@ def test_repeated_stop_import_idempotent(tmp_path):
 def test_verification_command_satisfies_tests_pass(tmp_path):
     contract_yaml = tmp_path / "contract.yaml"
     contract_yaml.write_text('''
-task_id: test-task
+task_id: test-task-1
 requirements:
   - type: tests_pass
     parameters:
@@ -193,7 +197,7 @@ requirements:
         args: ["-c", "echo 'green'"]
 ''')
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
-    run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
+    run_aw(["task", "bind", "test-task-1", "conv-1"], cwd=str(tmp_path))
     
     good_transcript = tmp_path / "transcript.jsonl"
     good_transcript.write_text('{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","created_at":"2026-08-26T00:00:01Z","content":"I am done."}\n', encoding="utf-8")
@@ -217,20 +221,22 @@ requirements:
     parameters:
       verification_command:
         command: "pytest"
-        args: ["test_dummy.py"]
+        args: []
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
-    run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
+    run_aw(["task", "bind", "test-task", "conv-2"], cwd=str(tmp_path))
     
     good_transcript = tmp_path / "transcript.jsonl"
     good_transcript.write_text('{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","created_at":"2026-08-26T00:00:01Z","content":"I am done."}\n', encoding="utf-8")
     input_data = {
-        "conversationId": "conv-1",
+        "conversationId": "conv-2",
         "transcriptPath": str(good_transcript.resolve())
     }
     
     proc = run_hook(tmp_path, input_data)
     res = json.loads(proc.stdout)
     assert res["decision"] == "allow", res.get("reason", "")
+
+
 
 

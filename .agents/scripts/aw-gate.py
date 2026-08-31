@@ -115,8 +115,13 @@ def main():
                 command = cmd_dict.get("command")
                 args = cmd_dict.get("args", [])
                 if command:
-                    broker = WitnessBroker(ledger=ledger)
-                    receipt = broker.run_command(command, args, session_id=b_session_id)
+                    old_cwd = os.getcwd()
+                    os.chdir(str(cwd))
+                    try:
+                        broker = WitnessBroker(ledger=ledger)
+                        receipt = broker.run_command(command, args, session_id=b_session_id)
+                    finally:
+                        os.chdir(old_cwd)
                     evaluator = ContractEvaluator(ledger=ledger)
                     eval_result = evaluator.evaluate(contract)
 

@@ -27,14 +27,15 @@ def run_aw(args, cwd):
 
 def setup_real_task(tmp_path, task_id="test-task", conv_id="conv-1"):
     contract_yaml = tmp_path / "contract.yaml"
+    python_path = sys.executable.replace("\\", "/")
     contract_yaml.write_text(f'''
 task_id: {task_id}
 requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
-        args: []
+        command: "{python_path}"
+        args: ["-m", "pytest"]
 ''')
     res = run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     assert res.returncode == 0
@@ -125,14 +126,15 @@ def test_real_done_task_allows(tmp_path):
     dummy_test.write_text("def test_ok():\n    assert True\n")
     
     contract_yaml = tmp_path / "contract.yaml"
-    contract_yaml.write_text("""
+    python_path = sys.executable.replace("\\", "/")
+    contract_yaml.write_text(f"""
 task_id: test-task
 requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
-        args: ["-m", "pytest", "test_dummy.py"]
+        command: "{python_path}"
+        args: ["-m", "pytest"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
@@ -180,16 +182,22 @@ def test_repeated_stop_import_idempotent(tmp_path):
     proc2 = run_hook(tmp_path, input_data)
     assert proc1.returncode == 0
     assert proc2.returncode == 0
-    # Both fail tests_pass but it proves it didn't crash on duplicate import.
+    res1 = json.loads(proc1.stdout)
+    res2 = json.loads(proc2.stdout)
+    assert res1["decision"] == "continue"
+    assert "tests_pass" in res1["reason"]
+    assert res2["decision"] == "continue"
+    assert "tests_pass" in res2["reason"]
 def test_verification_command_satisfies_tests_pass(tmp_path):
     contract_yaml = tmp_path / "contract.yaml"
-    contract_yaml.write_text('''
+    python_path = sys.executable.replace("\\", "/")
+    contract_yaml.write_text(f'''
 task_id: test-task
 requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
+        command: "{python_path}"
         args: ["-c", "echo 'green'"]
 ''')
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
@@ -209,23 +217,24 @@ requirements:
     dummy_test = tmp_path / "test_dummy.py"
     dummy_test.write_text("def test_ok():\n    assert True\n")
     
-    contract_yaml = tmp_path / "contract.yaml"
-    contract_yaml.write_text("""
-task_id: test-task
+    contract_yaml = tmp_path / "contract2.yaml"
+    python_path = sys.executable.replace("\\", "/")
+    contract_yaml.write_text(f"""
+task_id: test-task-2
 requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
-        args: ["-m", "pytest", "test_dummy.py"]
+        command: "{python_path}"
+        args: ["-m", "pytest"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
-    run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
+    run_aw(["task", "bind", "test-task-2", "conv-2"], cwd=str(tmp_path))
     
-    good_transcript = tmp_path / "transcript.jsonl"
+    good_transcript = tmp_path / "transcript2.jsonl"
     good_transcript.write_text('{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","created_at":"2026-08-26T00:00:01Z","content":"I am done."}\n', encoding="utf-8")
     input_data = {
-        "conversationId": "conv-1",
+        "conversationId": "conv-2",
         "transcriptPath": str(good_transcript.resolve())
     }
     

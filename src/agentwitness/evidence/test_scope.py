@@ -26,14 +26,25 @@ def classify_pytest_scope(argv: Iterable[str]) -> Tuple[bool, List[str]]:
     """
 
     args = list(argv)
+    
+    # Strip everything up to and including 'pytest' if invoked via python -m pytest
+    # or just strip the executable path.
+    start_idx = 1
+    for idx, a in enumerate(args):
+        base = a.lower().replace("\\", "/").split("/")[-1]
+        if base in {"pytest", "pytest.exe"}:
+            start_idx = idx + 1
+            break
+            
+    pytest_args = args[start_idx:]
     reasons: List[str] = []
     i = 0
-    while i < len(args):
-        arg = args[i]
+    while i < len(pytest_args):
+        arg = pytest_args[i]
         low = arg.lower()
 
         if low in _SCOPE_FLAGS_WITH_VALUE:
-            value = args[i + 1] if i + 1 < len(args) else ""
+            value = pytest_args[i + 1] if i + 1 < len(pytest_args) else ""
             reasons.append(f"{arg} {value}".strip())
             i += 2
             continue

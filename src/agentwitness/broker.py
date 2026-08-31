@@ -60,10 +60,11 @@ class WitnessBroker:
             evidence_list.append(extract_process_evidence(result.returncode, result.stdout, result.stderr))
 
             command_lower = command.lower()
+            base_cmd = os.path.basename(command_lower.replace("\\", "/"))
             is_pytest = (
-                command_lower == "pytest"
-                or command_lower.endswith("pytest.exe")
-                or (command_lower in {"python", "python3", "py", "python.exe"} and "pytest" in args)
+                base_cmd == "pytest"
+                or base_cmd == "pytest.exe"
+                or (base_cmd in {"python", "python3", "py", "python.exe"} and "pytest" in args)
             )
             if is_pytest:
                 pytest_ev = parse_pytest_output(result.returncode, result.stdout)

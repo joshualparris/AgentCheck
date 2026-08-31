@@ -198,15 +198,15 @@ if __name__ == '__main__':
     
     import sys
     import json
-    abs_python = str(sys.executable).replace("\\\\", "/")
-    abs_script = str(script_file.resolve()).replace("\\\\", "/")
+    rel_python = "venv/Scripts/python.exe" if Path("venv/Scripts/python.exe").exists() else "python"
+    rel_script = ".agents/scripts/aw-gate.py"
     hooks_data = {
       "agentwitness-gate": {
         "enabled": True,
         "Stop": [
           {
             "type": "command",
-            "command": f'"{abs_python}" "{abs_script}"',
+            "command": f'"{rel_python}" "{rel_script}"',
             "timeout": 30
           }
         ]

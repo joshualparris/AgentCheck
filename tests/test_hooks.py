@@ -189,31 +189,6 @@ def test_repeated_stop_import_idempotent(tmp_path):
     assert res2["decision"] == "continue"
     assert "tests_pass" in res2["reason"]
 def test_verification_command_satisfies_tests_pass(tmp_path):
-    contract_yaml = tmp_path / "contract.yaml"
-    python_path = sys.executable.replace("\\", "/")
-    contract_yaml.write_text(f'''
-task_id: test-task
-requirements:
-  - type: tests_pass
-    parameters:
-      verification_command:
-        command: "{python_path}"
-        args: ["-c", "echo 'green'"]
-''')
-    run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
-    run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
-    
-    good_transcript = tmp_path / "transcript.jsonl"
-    good_transcript.write_text('{"step_index":1,"source":"MODEL","type":"PLANNER_RESPONSE","created_at":"2026-08-26T00:00:01Z","content":"I am done."}\n', encoding="utf-8")
-    input_data = {
-        "conversationId": "conv-1",
-        "transcriptPath": str(good_transcript.resolve())
-    }
-    # It will fail TESTS_PASS because powershell -c "echo 'green'" is not pytest output!
-    # Ah, TESTS_PASS specifically expects pytest output. Wait! 
-    # Can verification_command be used to run a command that satisfies TESTS_PASS?
-    # Yes, it expects it to produce PytestEvidence. We can't fake it with echo. We must run a real pytest!
-
     dummy_test = tmp_path / "test_dummy.py"
     dummy_test.write_text("def test_ok():\n    assert True\n")
     

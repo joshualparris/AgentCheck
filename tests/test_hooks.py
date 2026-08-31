@@ -33,7 +33,7 @@ requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
+        command: "pytest"
         args: []
 ''')
     res = run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
@@ -131,7 +131,7 @@ requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
+        command: "pytest"
         args: ["-m", "pytest", "test_dummy.py"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
@@ -189,7 +189,7 @@ requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
+        command: "pytest"
         args: ["-c", "echo 'green'"]
 ''')
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
@@ -216,7 +216,7 @@ requirements:
   - type: tests_pass
     parameters:
       verification_command:
-        command: "C:/dev/LLMLieDetector/AgentWitness/venv/Scripts/pytest.exe"
+        command: "pytest"
         args: ["-m", "pytest", "test_dummy.py"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
@@ -232,3 +232,4 @@ requirements:
     proc = run_hook(tmp_path, input_data)
     res = json.loads(proc.stdout)
     assert res["decision"] == "allow", res.get("reason", "")
+

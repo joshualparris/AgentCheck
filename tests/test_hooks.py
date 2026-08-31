@@ -34,7 +34,7 @@ requirements:
     parameters:
       verification_command:
         command: "pytest"
-        args: []
+        args: ['--version']
 ''')
     res = run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     assert res.returncode == 0
@@ -132,7 +132,7 @@ requirements:
     parameters:
       verification_command:
         command: "pytest"
-        args: ["-m", "pytest", "test_dummy.py"]
+        args: ["test_dummy.py"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
@@ -217,7 +217,7 @@ requirements:
     parameters:
       verification_command:
         command: "pytest"
-        args: ["-m", "pytest", "test_dummy.py"]
+        args: ["test_dummy.py"]
 """)
     run_aw(["task", "create", str(contract_yaml)], cwd=str(tmp_path))
     run_aw(["task", "bind", "test-task", "conv-1"], cwd=str(tmp_path))
@@ -232,4 +232,5 @@ requirements:
     proc = run_hook(tmp_path, input_data)
     res = json.loads(proc.stdout)
     assert res["decision"] == "allow", res.get("reason", "")
+
 

@@ -130,6 +130,7 @@ class ProtectedSectionsEvidence(EvidenceBase):
 
 
 EvidenceAdapter = Union[
+    'TaskBindingEvidence',
     ProcessEvidence,
     PytestEvidence,
     TranscriptIntegrityEvidence,
@@ -142,6 +143,16 @@ EvidenceAdapter = Union[
     ProtectedSectionsEvidence,
     EvidenceBase,
 ]
+
+
+from pydantic import BaseModel, Field
+
+class TaskBindingEvidence(BaseModel):
+    type: str = "task_binding"
+    task_id: str
+    session_id: str
+    conversation_id: str
+    timestamp: str
 
 
 class Receipt(BaseModel):

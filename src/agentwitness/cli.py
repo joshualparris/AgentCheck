@@ -21,7 +21,243 @@ app.add_typer(task_app, name="task")
 console = Console()
 
 
+
+
+integration_app = typer.Typer(help="Manage AgentWitness integrations.")
+app.add_typer(integration_app, name="integration")
+
+@integration_app.command("install")
+def integration_install(integration: str, scope: str = typer.Option("workspace", "--scope")):
+    if integration != "antigravity":
+        console.print(f"[bold red]Unknown integration '{integration}'.[/bold red]")
+        raise typer.Exit(1)
+    
+    if scope != "workspace":
+        console.print(f"[bold red]Only workspace scope is currently supported.[/bold red]")
+        raise typer.Exit(1)
+        
+    agents_dir = Path(".agents")
+    agents_dir.mkdir(exist_ok=True)
+    scripts_dir = agents_dir / "scripts"
+    scripts_dir.mkdir(exist_ok=True)
+    
+    hooks_file = agents_dir / "hooks.json"
+    script_file = scripts_dir / "aw-gate.py"
+    
+    import textwrap
+    script_content = textwrap.dedent('''\
+import sys
+import os
+import json
+from pathlib import Path
+
+try:
+    from agentwitness.ledger import Ledger
+    from agentwitness.contracts.models import TaskStatus, RequirementStatus, RequirementType
+    from agentwitness.contracts.storage import ContractStorage
+    from agentwitness.contracts.evaluator import ContractEvaluator
+    from agentwitness.adapters.antigravity import AntigravityAdapter
+    from agentwitness.broker import WitnessBroker
+    from agentwitness.claimguard import ClaimGuard
+    from agentwitness.models import Verdict
+except ImportError:
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    sys.path.insert(0, str(repo_root / "src"))
+    from agentwitness.ledger import Ledger
+    from agentwitness.contracts.models import TaskStatus, RequirementStatus, RequirementType
+    from agentwitness.contracts.storage import ContractStorage
+    from agentwitness.contracts.evaluator import ContractEvaluator
+    from agentwitness.adapters.antigravity import AntigravityAdapter
+    from agentwitness.broker import WitnessBroker
+    from agentwitness.claimguard import ClaimGuard
+    from agentwitness.models import Verdict
+
+def get_final_response(transcript_path: Path) -> str:
+    lines = []
+    with open(transcript_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    for line in reversed(lines):
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+            if data.get("source") == "MODEL" and data.get("content"):
+                return data["content"]
+        except Exception:
+            continue
+    return ""
+
+def main():
+    try:
+        input_data = json.load(sys.stdin)
+    except Exception:
+        input_data = {}
+
+    cwd = Path(os.getcwd())
+    if cwd.name == ".agents":
+        cwd = cwd.parent
+    os.chdir(cwd)
+
+    aw_dir = cwd / ".agentwitness"
+    if not aw_dir.exists():
+        print(json.dumps({"decision": "allow"}))
+        return
+
+    ledger = Ledger(filepath=aw_dir / "receipts.jsonl")
+
+    active_bindings = {}
+    for r in ledger.read_all():
+        for ev in r.environmental_evidence:
+            if getattr(ev, "type", "") == "task_binding" and getattr(ev, "conversation_id", "") == input_data.get("conversationId", ""):
+                b_task_id = getattr(ev, "task_id", "")
+                b_session_id = getattr(ev, "session_id", "")
+                active_bindings[b_task_id] = b_session_id
+
+    if len(active_bindings) == 0:
+        print(json.dumps({"decision": "allow"}))
+        return
+    elif len(active_bindings) > 1:
+        print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: Conflicting task bindings for this conversation."}))
+        return
+
+    b_task_id, b_session_id = list(active_bindings.items())[0]
+
+    try:
+        transcript_path = input_data.get("transcriptPath")
+        if not transcript_path or not Path(transcript_path).exists():
+            print(json.dumps({"decision": "continue", "reason": "AgentWitness Integrity Error: Transcript path is missing or does not exist."}))
+            return
+
+        fully_idle = input_data.get("fullyIdle", True)
+        if not fully_idle:
+            print(json.dumps({"decision": "continue", "reason": "AgentWitness Gate: fullyIdle is false. Outstanding background tasks exist."}))
+            return
+
+        term_reason = input_data.get("terminationReason", "model_stop")
+        if term_reason != "model_stop":
+            print(json.dumps({"decision": "allow"}))
+            return
+
+        storage = ContractStorage(directory=aw_dir / "tasks", ledger=ledger)
+        contract = storage.load(b_task_id)
+        if not contract:
+            print(json.dumps({"decision": "continue", "reason": f"AgentWitness Integrity Error: Bound task {b_task_id} not found."}))
+            return
+
+        adapter = AntigravityAdapter(transcript_path=Path(transcript_path), ledger=ledger)
+        receipts, stats = adapter.parse_receipts(bound_task_id=b_task_id, bound_session_id=b_session_id)
+
+        for r in receipts:
+            ledger.append(r)
+
+        evaluator = ContractEvaluator(ledger=ledger)
+        eval_result = evaluator.evaluate(contract)
+
+        # Independent Stop-time verification for TESTS_PASS
+        tests_pass_req = next((req for req in contract.requirements if req.type == RequirementType.TESTS_PASS), None)
+        if tests_pass_req and "verification_command" in tests_pass_req.parameters:
+            tp_res = next((res for res in eval_result.results if res.requirement.type == RequirementType.TESTS_PASS), None)
+            if tp_res and tp_res.status == RequirementStatus.UNVERIFIED:
+                cmd_dict = tests_pass_req.parameters["verification_command"]
+                command = cmd_dict.get("command")
+                args = cmd_dict.get("args", [])
+                if command:
+                    broker = WitnessBroker(ledger=ledger)
+                    receipt = broker.run_command(command, args, session_id=b_session_id)
+                    evaluator = ContractEvaluator(ledger=ledger)
+                    eval_result = evaluator.evaluate(contract)
+
+        reasons = []
+        if eval_result.status != TaskStatus.DONE:
+            for r in eval_result.results:
+                if r.status.value != "SATISFIED":
+                    reasons.append(f"{r.requirement.type.value}: {r.explanation}")
+
+        final_text = get_final_response(Path(transcript_path))
+        if final_text:
+            claims = ClaimGuard(ledger=ledger).audit(final_text, session_id=b_session_id)
+            if claims:
+                for c in claims:
+                    if c.verdict not in {Verdict.VERIFIED, Verdict.ACTION_VERIFIED}:
+                        reasons.append(f"Claim unsupported ({c.verdict.value}): {c.text}")
+
+        if reasons:
+            reason_str = "AgentWitness Final-Answer Gate: Task is not complete. " + " | ".join(reasons)
+            print(json.dumps({"decision": "continue", "reason": reason_str}))
+        else:
+            print(json.dumps({"decision": "allow"}))
+
+    except Exception as e:
+        print(json.dumps({"decision": "continue", "reason": f"AgentWitness Exception: {str(e)}"}))
+
+if __name__ == '__main__':
+    main()
+    ''')
+    script_file.write_text(script_content, encoding="utf-8")
+    
+    import sys
+    import json
+    abs_python = str(sys.executable).replace("\\\\", "/")
+    abs_script = str(script_file.resolve()).replace("\\\\", "/")
+    hooks_data = {
+      "agentwitness-gate": {
+        "enabled": True,
+        "Stop": [
+          {
+            "type": "command",
+            "command": f'"{abs_python}" "{abs_script}"',
+            "timeout": 30
+          }
+        ]
+      }
+    }
+    hooks_file.write_text(json.dumps(hooks_data, indent=2), encoding="utf-8")
+    
+    console.print(f"[bold green]Installed Antigravity integration at {hooks_file}[/bold green]")
+
+@integration_app.command("doctor")
+def integration_doctor(integration: str):
+    if integration != "antigravity":
+        console.print(f"[bold red]Unknown integration '{integration}'.[/bold red]")
+        raise typer.Exit(1)
+        
+    hooks_file = Path(".agents/hooks.json")
+    if not hooks_file.exists():
+        console.print("[bold red]hooks.json not found.[/bold red]")
+        raise typer.Exit(1)
+        
+    import json
+    try:
+        hooks = json.loads(hooks_file.read_text(encoding="utf-8"))
+        command = hooks["agentwitness-gate"]["Stop"][0]["command"]
+    except Exception as e:
+        console.print(f"[bold red]Failed to parse hooks.json: {e}[/bold red]")
+        raise typer.Exit(1)
+        
+    import shlex
+    parts = shlex.split(command)
+    python_path = parts[0]
+    script_path = parts[1]
+    
+    if not Path(python_path).exists():
+        console.print(f"[bold red]Python interpreter not found: {python_path}[/bold red]")
+        raise typer.Exit(1)
+        
+    if not Path(script_path).exists():
+        console.print(f"[bold red]Hook script not found: {script_path}[/bold red]")
+        raise typer.Exit(1)
+        
+    ledger = Ledger()
+    if not ledger.filepath.parent.exists():
+        console.print("[bold red]AgentWitness is not initialized in this directory.[/bold red]")
+        raise typer.Exit(1)
+        
+    console.print("[bold green]Antigravity integration is healthy.[/bold green]")
+
 @task_app.command("create")
+
+
 def task_create(file: str = typer.Argument(...)):
     """Create and cryptographically anchor a task contract from YAML."""
     with open(file, "r", encoding="utf-8") as f:
@@ -91,6 +327,43 @@ def print_task_evaluation(eval_result):
     else:
         console.print(f"{eval_result.status.value}\n\n[bold]NOT DONE[/bold]")
 
+
+
+@task_app.command("bind")
+def task_bind(task_id: str = typer.Argument(...), conversation_id: str = typer.Argument(...)):
+    """Bind an Antigravity conversation to a task."""
+    from datetime import datetime, timezone
+    from agentwitness.models import TaskBindingEvidence, Receipt, PolicyEvaluation
+    from agentwitness.broker import WitnessBroker
+    import os
+    
+    storage = ContractStorage()
+    contract = storage.load(task_id)
+    if not contract:
+        console.print(f"[bold red]Task '{task_id}' not found.[/bold red]")
+        raise typer.Exit(1)
+        
+    ev = TaskBindingEvidence(
+        task_id=contract.task_id,
+        session_id=contract.session_id,
+        conversation_id=conversation_id,
+        timestamp=datetime.now(timezone.utc).isoformat()
+    )
+    r = Receipt(
+        receipt_id=str(__import__('uuid').uuid4()),
+        session_id=contract.session_id,
+        timestamp_start=ev.timestamp,
+        timestamp_end=ev.timestamp,
+        cwd=os.getcwd(),
+        resolved_executable="aw",
+        argv=["aw", "task", "bind", task_id, conversation_id],
+        execution_status=ExecutionStatus.SUCCEEDED,
+        policy_decision=None,
+        policy_evaluation=PolicyEvaluation.NOT_APPLICABLE,
+        environmental_evidence=[ev]
+    )
+    Ledger().append(r)
+    console.print(f"[bold green]Bound conversation '{conversation_id}' to task '{task_id}'.[/bold green]")
 
 @task_app.command("status")
 def task_status(task_id: str, hardened: bool = typer.Option(False, "--hardened", help="Use hardened verification backend")):
@@ -269,7 +542,7 @@ def sync_transcript(conversation_id: str):
     adapter = AntigravityAdapter(transcript_path)
     receipts, stats = adapter.parse_receipts()
     
-    ledger = Ledger()
+    ledger = Ledger(filepath=aw_dir / "receipts.jsonl")
     for receipt in receipts:
         ledger.append(receipt)
         
@@ -277,3 +550,4 @@ def sync_transcript(conversation_id: str):
     console.print(f"Already seen: {stats['already_seen']}")
     console.print(f"Ambiguous: {stats['ambiguous']}")
     console.print(f"Rejected: {stats['rejected']}")
+

@@ -18,6 +18,10 @@ from datetime import datetime, timezone
 app = typer.Typer(help="AgentWitness - Independent verification layer for AI agents.")
 task_app = typer.Typer(help="Manage Definition-of-Done task contracts.")
 app.add_typer(task_app, name="task")
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(errors='replace')
+    sys.stderr.reconfigure(errors='replace')
 console = Console()
 
 
@@ -550,4 +554,5 @@ def sync_transcript(conversation_id: str):
     console.print(f"Already seen: {stats['already_seen']}")
     console.print(f"Ambiguous: {stats['ambiguous']}")
     console.print(f"Rejected: {stats['rejected']}")
+
 

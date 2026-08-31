@@ -1,0 +1,15 @@
+task_id: integrate-auto-gate
+title: Integrate Auto Antigravity Gate onto repaired AgentWitness
+requirements:
+  - requirement_id: r1
+    type: tests_pass
+  - requirement_id: r2
+    type: local_commit_exists
+  - requirement_id: r3
+    type: no_policy_violations
+  - requirement_id: r4
+    type: no_secrets_in_diff
+  - requirement_id: r5
+    type: clean_worktree
+  - requirement_id: r6
+    type: remote_sha_match

@@ -59,44 +59,51 @@ class ClaimGuard:
                     claim.evidence_text = "No evidence found of file modifications."
 
             elif claim.claim_type == "tests_passed":
-                pytest_ev = None
-                pytest_receipt = None
+                test_ev = None
+                test_receipt = None
+                test_type = None
                 for receipt in reversed(receipts):
                     if receipt.policy_decision != PolicyDecision.ALLOW:
                         continue
                     for ev in receipt.environmental_evidence:
-                        if self._type(ev) == "pytest":
-                            pytest_ev = PytestEvidence(**ev) if isinstance(ev, dict) else ev
-                            pytest_receipt = receipt
+                        if self._type(ev) in ("pytest", "vitest"):
+                            test_type = self._type(ev)
+                            if test_type == "pytest":
+                                test_ev = PytestEvidence(**ev) if isinstance(ev, dict) else ev
+                            else:
+                                from agentwitness.models import VitestEvidence
+                                test_ev = VitestEvidence(**ev) if isinstance(ev, dict) else ev
+                            test_receipt = receipt
                             break
-                    if pytest_ev:
+                    if test_ev:
                         break
 
-                if not pytest_ev or not pytest_receipt:
+                if not test_ev or not test_receipt:
                     claim.verdict = Verdict.UNVERIFIED
                     claim.evidence_text = "No test execution evidence found."
                     continue
 
-                receipt_id = pytest_receipt.receipt_id
-                if pytest_receipt.execution_status != ExecutionStatus.SUCCEEDED or pytest_ev.failed > 0 or pytest_ev.exit_code != 0:
+                receipt_id = test_receipt.receipt_id
+                if test_receipt.execution_status != ExecutionStatus.SUCCEEDED or test_ev.failed > 0 or test_ev.exit_code != 0:
                     claim.verdict = Verdict.CONTRADICTED
-                    claim.evidence_text = f"Observed: {pytest_ev.collected}\nPassed: {pytest_ev.passed}\nFailed: {pytest_ev.failed}\nEvidence: {receipt_id}"
+                    claim.evidence_text = f"Observed: {test_ev.collected}\nPassed: {test_ev.passed}\nFailed: {test_ev.failed}\nEvidence: {receipt_id}"
                     continue
 
-                if pytest_ev.collected <= 0:
+                if test_ev.collected <= 0:
                     claim.verdict = Verdict.UNVERIFIED
-                    claim.evidence_text = f"Pytest reported success but collected zero tests. Evidence: {receipt_id}"
+                    claim.evidence_text = f"{test_type.capitalize()} reported success but collected zero tests. Evidence: {receipt_id}"
                     continue
 
-                narrowed, reasons = classify_pytest_scope(pytest_receipt.argv)
-                if narrowed:
-                    claim.verdict = Verdict.UNVERIFIED
-                    claim.evidence_text = f"Tests passed, but the run was scope-narrowed ({', '.join(reasons)}). It cannot verify a broad tests-passed claim. Evidence: {receipt_id}"
-                    continue
+                if test_type == "pytest":
+                    narrowed, reasons = classify_pytest_scope(test_receipt.argv)
+                    if narrowed:
+                        claim.verdict = Verdict.UNVERIFIED
+                        claim.evidence_text = f"Tests passed, but the run was scope-narrowed ({', '.join(reasons)}). It cannot verify a broad tests-passed claim. Evidence: {receipt_id}"
+                        continue
 
-                if pytest_ev.workspace_fingerprint:
-                    current_fp, _ = workspace_fingerprint(pytest_receipt.cwd)
-                    if current_fp != pytest_ev.workspace_fingerprint:
+                if test_ev.workspace_fingerprint:
+                    current_fp, _ = workspace_fingerprint(test_receipt.cwd)
+                    if current_fp != test_ev.workspace_fingerprint:
                         claim.verdict = Verdict.UNVERIFIED
                         claim.evidence_text = f"Tests passed, but relevant workspace files changed afterwards; the green result is stale. Evidence: {receipt_id}"
                         continue
@@ -104,20 +111,20 @@ class ClaimGuard:
                 match = re.search(r"(\d+)\s+tests", claim.text.lower())
                 if match:
                     claimed_count = int(match.group(1))
-                    if pytest_ev.passed >= claimed_count:
+                    if test_ev.passed >= claimed_count:
                         claim.verdict = Verdict.VERIFIED
-                        claim.evidence_text = f"Observed {pytest_ev.passed} passed tests with no later relevant edit detected. Evidence: {receipt_id}"
+                        claim.evidence_text = f"Observed {test_ev.passed} passed tests with no later relevant edit detected. Evidence: {receipt_id}"
                     else:
                         claim.verdict = Verdict.PARTIALLY_VERIFIED
-                        claim.evidence_text = f"Observed only {pytest_ev.passed} passed tests, expected {claimed_count}. Evidence: {receipt_id}"
+                        claim.evidence_text = f"Observed only {test_ev.passed} passed tests, expected {claimed_count}. Evidence: {receipt_id}"
                 else:
-                    failed = pytest_ev.failed or 0
-                    if failed == 0 and pytest_ev.passed and pytest_ev.passed > 0:
+                    failed = test_ev.failed or 0
+                    if failed == 0 and test_ev.passed > 0:
                         claim.verdict = Verdict.VERIFIED
-                        claim.evidence_text = f"Observed {pytest_ev.passed} passed tests (no failures) with no later relevant edit detected. Evidence: {receipt_id}"
+                        claim.evidence_text = f"Observed tests passing ({test_ev.passed}) with no later relevant edit detected. Evidence: {receipt_id}"
                     else:
-                        claim.verdict = Verdict.PARTIALLY_VERIFIED
-                        claim.evidence_text = f"Observed failures or 0 passed tests. Passed: {pytest_ev.passed}, Failed: {failed}. Evidence: {receipt_id}"
+                        claim.verdict = Verdict.CONTRADICTED
+                        claim.evidence_text = f"Tests were observed to fail or not execute correctly. Evidence: {receipt_id}"
 
             elif claim.claim_type == "push_occurred":
                 blocked = False

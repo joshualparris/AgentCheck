@@ -73,6 +73,20 @@ class WitnessBroker:
                     pytest_ev.workspace_file_count = file_count
                     evidence_list.append(pytest_ev)
 
+            is_vitest = (
+                command_lower == "npm" and "test" in args
+                or command_lower == "vitest"
+                or (os.path.basename(command_lower) in {"node", "node.exe"} and "vitest" in args)
+            )
+            if is_vitest:
+                from agentwitness.evidence.vitest import parse_vitest_output
+                vitest_ev = parse_vitest_output(result.returncode, result.stdout)
+                if vitest_ev:
+                    fingerprint, file_count = workspace_fingerprint(os.getcwd())
+                    vitest_ev.workspace_fingerprint = fingerprint
+                    vitest_ev.workspace_file_count = file_count
+                    evidence_list.append(vitest_ev)
+
             # A state snapshot after every command is useful for file/diff claims,
             # but the evaluator still requires the *command itself* to have
             # succeeded before treating commit/push outcomes as satisfied.

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AgentWitness Review Console</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; background-color: #1e1e1e; color: #d4d4d4; }
+        #sidebar { width: 300px; background-color: #252526; padding: 20px; border-right: 1px solid #333; display: flex; flex-direction: column; }
+        #main { flex-grow: 1; display: flex; flex-direction: column; }
+        #chat { flex-grow: 1; padding: 20px; overflow-y: auto; }
+        .message { margin-bottom: 20px; }
+        .speaker { font-weight: bold; margin-bottom: 5px; font-size: 0.9em; }
+        .speaker.JOSH { color: #4fc1ff; }
+        .speaker.ANTIGRAVITY { color: #c586c0; }
+        .speaker.CODEX { color: #569cd6; }
+        .speaker.AGENTWITNESS { color: #4ec9b0; }
+        .speaker.SYSTEM { color: #858585; }
+        .content { background-color: #2d2d2d; padding: 10px; border-radius: 4px; font-family: monospace; white-space: pre-wrap; font-size: 0.9em; overflow-x: auto; }
+        .status-panel { margin-bottom: 20px; padding: 15px; background-color: #333; border-radius: 4px; }
+        h3 { margin-top: 0; font-size: 1.1em; color: #fff; }
+        .control-panel { display: flex; gap: 10px; margin-top: auto; }
+        button { padding: 8px 12px; background-color: #0e639c; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background-color: #1177bb; }
+        .receipt { border-left: 3px solid #4ec9b0; }
+        .findings-view { flex-grow: 1; margin-top: 20px; background-color: #333; padding: 15px; border-radius: 4px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <div class="status-panel">
+            <h3>Status</h3>
+            <div id="status-repo">Repo: Loading...</div>
+            <div id="status-mode">Trust Mode: Loading...</div>
+        </div>
+        <div class="findings-view">
+            <h3>Codex Findings</h3>
+            <div id="findings-list">No findings yet.</div>
+        </div>
+        <div class="control-panel">
+            <button>PAUSE</button>
+            <button>RESUME</button>
+            <button>STOP</button>
+        </div>
+    </div>
+    <div id="main">
+        <div id="chat"></div>
+    </div>
+
+    <script>
+        const chat = document.getElementById('chat');
+        const evtSource = new EventSource('/api/stream');
+        
+        evtSource.onmessage = function(event) {
+            const payload = JSON.parse(event.data);
+            const msgDiv = document.createElement('div');
+            msgDiv.className = 'message';
+            
+            let speaker = 'SYSTEM';
+            let contentText = '';
+            
+            if (payload.type === 'transcript') {
+                const step = payload.data;
+                if (step.source === 'USER_EXPLICIT') {
+                    speaker = 'JOSH';
+                    contentText = step.content;
+                } else if (step.source === 'MODEL') {
+                    speaker = 'ANTIGRAVITY';
+                    if (step.content) contentText += step.content + '\n';
+                    if (step.tool_calls) {
+                        step.tool_calls.forEach(tc => {
+                            if (tc.name === 'run_command') {
+                                contentText += '> ' + tc.args.CommandLine + '\n';
+                            } else {
+                                contentText += 'Tool: ' + tc.name + '\n';
+                            }
+                        });
+                    }
+                } else if (step.source === 'SYSTEM') {
+                    if (step.content && step.content.includes('Task id') && step.content.includes('Output:')) {
+                        // Check if it's codex output
+                        if (step.content.includes('codex')) {
+                            speaker = 'CODEX';
+                        }
+                    }
+                    contentText = step.content;
+                }
+            } else if (payload.type === 'receipt') {
+                speaker = 'AGENTWITNESS';
+                const r = payload.data;
+                contentText = 'Receipt ' + r.receipt_id + '\nCommand: ' + r.resolved_executable + ' ' + (r.argv ? r.argv.join(' ') : '') + '\nStatus: ' + r.execution_status;
+                msgDiv.classList.add('receipt');
+                
+                document.getElementById('status-repo').innerText = 'Repo: ' + r.cwd;
+                document.getElementById('status-mode').innerText = 'Trust Mode: ' + (r.policy_decision || 'N/A');
+            }
+            
+            if (!contentText) return;
+            
+            const speakerDiv = document.createElement('div');
+            speakerDiv.className = 'speaker ' + speaker;
+            speakerDiv.innerText = speaker;
+            
+            const contentDiv = document.createElement('div');
+            contentDiv.className = 'content';
+            contentDiv.innerText = contentText;
+            
+            msgDiv.appendChild(speakerDiv);
+            msgDiv.appendChild(contentDiv);
+            chat.appendChild(msgDiv);
+            chat.scrollTop = chat.scrollHeight;
+        };
+    </script>
+</body>
+</html>

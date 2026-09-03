@@ -62,6 +62,16 @@ class PytestEvidence(EvidenceBase):
     workspace_fingerprint: Optional[str] = None
     workspace_file_count: Optional[int] = None
 
+class VitestEvidence(EvidenceBase):
+    type: str = "vitest"
+    collected: Optional[int] = None
+    passed: Optional[int] = None
+    failed: Optional[int] = None
+    skipped: Optional[int] = None
+    exit_code: int
+    workspace_fingerprint: Optional[str] = None
+    workspace_file_count: Optional[int] = None
+
 
 class TranscriptIntegrityEvidence(EvidenceBase):
     type: Literal["transcript_integrity"] = "transcript_integrity"
@@ -141,6 +151,7 @@ EvidenceAdapter = Union[
     RemoteCIEvidence,
     SecretScanEvidence,
     ProtectedSectionsEvidence,
+    VitestEvidence,
     EvidenceBase,
 ]
 

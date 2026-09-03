@@ -186,19 +186,21 @@ class ContractEvaluator:
 
         for receipt in reversed(receipts):
             for ev in receipt.environmental_evidence:
-                if self._ev_type(ev) != "pytest":
+                ev_type = self._ev_type(ev)
+                if ev_type not in ("pytest", "vitest"):
                     continue
 
                 exit_code = self._ev_value(ev, "exit_code")
                 failed = self._ev_value(ev, "failed")
                 collected = self._ev_value(ev, "collected")
 
+                tool_name = ev_type.capitalize()
                 if receipt.execution_status != ExecutionStatus.SUCCEEDED or exit_code != 0 or (failed is not None and failed > 0):
                     return RequirementResult(
                         requirement=req,
                         status=RequirementStatus.UNSATISFIED,
                         evidence_receipt_ids=[receipt.receipt_id],
-                        explanation="The latest witnessed pytest execution failed.",
+                        explanation=f"The latest witnessed {tool_name} execution failed.",
                     )
 
                 minimum_collected = int(req.parameters.get("minimum_collected", 1))
@@ -208,18 +210,19 @@ class ContractEvaluator:
                         requirement=req,
                         status=RequirementStatus.UNVERIFIED,
                         evidence_receipt_ids=[receipt.receipt_id],
-                        explanation=f"Pytest exited successfully but collected {col_str} test(s); at least {minimum_collected} are required.",
+                        explanation=f"{tool_name} exited successfully but collected {col_str} test(s); at least {minimum_collected} are required.",
                     )
 
                 allow_subset = bool(req.parameters.get("allow_subset", False))
-                narrowed, reasons = classify_pytest_scope(receipt.argv)
-                if narrowed and not allow_subset:
-                    return RequirementResult(
-                        requirement=req,
-                        status=RequirementStatus.UNVERIFIED,
-                        evidence_receipt_ids=[receipt.receipt_id],
-                        explanation="Tests passed, but the invocation was scope-narrowed (" + ", ".join(reasons) + "); this cannot prove a broad suite-passed requirement.",
-                    )
+                if ev_type == "pytest":
+                    narrowed, reasons = classify_pytest_scope(receipt.argv)
+                    if narrowed and not allow_subset:
+                        return RequirementResult(
+                            requirement=req,
+                            status=RequirementStatus.UNVERIFIED,
+                            evidence_receipt_ids=[receipt.receipt_id],
+                            explanation="Tests passed, but the invocation was scope-narrowed (" + ", ".join(reasons) + "); this cannot prove a broad suite-passed requirement.",
+                        )
 
                 recorded_fp = self._ev_value(ev, "workspace_fingerprint")
                 require_fresh = req.parameters.get("require_fresh", recorded_fp is not None)

@@ -13,12 +13,43 @@ from agentwitness.contracts.models import TaskContract, Requirement, Requirement
 from agentwitness.contracts.storage import ContractStorage
 from agentwitness.contracts.evaluator import ContractEvaluator
 import yaml
+import json
 from datetime import datetime, timezone
 
 app = typer.Typer(help="AgentWitness - Independent verification layer for AI agents.")
 task_app = typer.Typer(help="Manage Definition-of-Done task contracts.")
 app.add_typer(task_app, name="task")
 console = Console()
+
+
+@app.command("supervise")
+def supervise(
+    goal_file: Path = typer.Option(..., "--goal-file", exists=True, readable=True),
+    workspace: Path = typer.Option(..., "--workspace", exists=True, file_okay=False),
+    state_dir: Path = typer.Option(..., "--state-dir"),
+    conversation_id: Optional[str] = typer.Option(None, "--conversation-id"),
+    evidence_repo: list[Path] = typer.Option([], "--evidence-repo"),
+    max_cycles: int = typer.Option(25, "--max-cycles", min=1),
+    max_total_tokens: int = typer.Option(1_000_000, "--max-total-tokens", min=1),
+    max_cost_usd: float = typer.Option(100.0, "--max-cost-usd", min=0.01),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    retry_human_required: bool = typer.Option(False, "--retry-human-required"),
+):
+    """Run a persistent Antigravity implementation / Codex supervision loop."""
+    from agentwitness.supervisor_loop import LoopConfig, SupervisorLoop
+
+    config = LoopConfig(
+        goal=goal_file.read_text(encoding="utf-8"), workspace=str(workspace.resolve()),
+        state_dir=str(state_dir.resolve()), conversation_id=conversation_id,
+        evidence_repositories=[str(p.resolve()) for p in evidence_repo],
+        max_cycles=max_cycles, max_total_tokens=max_total_tokens, max_cost_usd=max_cost_usd,
+    )
+    result = SupervisorLoop(config, dry_run=dry_run, retry_human_required=retry_human_required).run()
+    console.print(json.dumps({
+        "status": result["status"], "cycle": result["cycle"],
+        "conversation_id": result["antigravity_conversation_id"],
+        "state_file": str((state_dir / "state.json").resolve()),
+    }, indent=2))
 
 
 

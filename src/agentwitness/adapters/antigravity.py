@@ -71,7 +71,7 @@ class AntigravityAdapter:
                             pending_commands[(step_index, call_index)] = cmd_info
                             sync_queue.append((step_index, call_index))
                 
-                elif data.get("type") == "GENERIC" and data.get("source") == "SYSTEM":
+                elif data.get("type") in ("GENERIC", "TOOL_RESPONSE") and data.get("source") in ("SYSTEM", "MODEL"):
                     content = data.get("content", "")
                     result_raw_event = line.strip()
                     result_id = f"step-{step_index}"
@@ -158,8 +158,14 @@ class AntigravityAdapter:
             return
             
         cmd_string = cmd_info["cmd"]
-        resolved_executable = cmd_string.split()[0] if cmd_string else ""
-        argv = [cmd_string] 
+        try:
+            # Handle quoted strings safely, dropping enclosing literal quotes if present
+            clean_cmd = cmd_string.strip('"\'') if cmd_string else ""
+            argv = shlex.split(clean_cmd)
+            resolved_executable = argv[0] if argv else ""
+        except ValueError:
+            argv = [cmd_string]
+            resolved_executable = cmd_string.split()[0] if cmd_string else ""
         
         execution_status = ExecutionStatus.SUCCEEDED if exit_code == 0 else ExecutionStatus.FAILED
         stdout_hash = hashlib.sha256(stdout_text.encode("utf-8")).hexdigest()

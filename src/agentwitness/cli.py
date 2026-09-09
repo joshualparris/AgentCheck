@@ -552,7 +552,7 @@ def sync_transcript(conversation_id: str):
     adapter = AntigravityAdapter(transcript_path)
     receipts, stats = adapter.parse_receipts()
     
-    ledger = Ledger(filepath=aw_dir / "receipts.jsonl")
+    ledger = Ledger()
     for receipt in receipts:
         ledger.append(receipt)
         

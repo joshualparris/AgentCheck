@@ -25,7 +25,10 @@ def _run_git(args: List[str], cwd: str) -> str:
 
 def _repository_from_remote_url(url: str) -> Optional[str]:
     url = url.strip()
-    if url.startswith("https://github.com/"):
+    # Handle optional username in https URLs like https://joshualparris@github.com/
+    if url.startswith("https://") and "@github.com/" in url:
+        slug = url.split("@github.com/", 1)[1]
+    elif url.startswith("https://github.com/"):
         slug = url[len("https://github.com/"):]
     elif url.startswith("git@github.com:"):
         slug = url[len("git@github.com:"):]

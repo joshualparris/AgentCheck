@@ -1,0 +1,14 @@
+task_id: antigravity-audit-1
+session_id: antigravity-audit-1
+title: Verify AgentWitness push
+requirements:
+  - type: local_commit_exists
+  - type: remote_sha_match
+    parameters:
+      repository: joshualparris/AgentCheck
+      remote: origin
+      branch: feat/auto-antigravity-gate
+      commit_sha: 2bc052f3c50f8bbae721d0426cd4a2d8456bb2f5
+  - type: no_secrets_in_diff
+    parameters:
+      commit_sha: 2bc052f3c50f8bbae721d0426cd4a2d8456bb2f5
